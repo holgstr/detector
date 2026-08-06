@@ -1,8 +1,9 @@
 /* Tracked sharps — portfolio + activity tabs.
- * Data: GET /positions and GET /activity on data-api.polymarket.com (public).
+ * Data: GET /positions, /activity, /trades on data-api.polymarket.com (public).
  */
 (function () {
   const DATA = "https://data-api.polymarket.com";
+  const PORT_COLS = 7;
 
   /** Add wallets here — names resolve from Polymarket leaderboard when possible. */
   /** @type {Array<{wallet:string, name?:string}>} */
@@ -27,6 +28,13 @@
   let portSort = "currentValue";
   let portSortDir = "desc";
   let portLoaded = false;
+
+  /** Expanded portfolio position keys */
+  const expandedPorts = new Set();
+  /** Expanded holder keys: `${positionKey}|${wallet}` */
+  const expandedHolders = new Set();
+  /** @type {Map<string, {status:string, trades:object[]}>} */
+  const holderTrades = new Map();
 
   /** @type {Array<object>} */
   let actRows = [];
@@ -95,6 +103,10 @@
     return `<span class="yn yn-other" title="${String(outcome || "").replace(/"/g, "&quot;")}">${letter}</span>`;
   }
 
+  function holderKey(posKey, wallet) {
+    return `${posKey}|${String(wallet || "").toLowerCase()}`;
+  }
+
   async function loadProfile(wallet, signal) {
     const q = new URLSearchParams({
       user: wallet,
@@ -152,6 +164,17 @@
     return Array.isArray(page) ? page : [];
   }
 
+  /** Last trades on a market (both Y and N) for one wallet. */
+  async function fetchHolderTrades(wallet, conditionId, signal) {
+    const q = new URLSearchParams({
+      user: wallet,
+      market: conditionId,
+      limit: "3",
+    });
+    const trades = await getJSON(`${DATA}/trades?${q}`, signal);
+    return Array.isArray(trades) ? trades : [];
+  }
+
   function aggregatePositions(rawByWallet) {
     /** @type {Map<string, object>} */
     const map = new Map();
@@ -185,7 +208,6 @@
         const init = Number(p.initialValue) || 0;
         const pnl = Number(p.cashPnl) || 0;
         const avg = Number(p.avgPrice) || 0;
-        // size-weighted avg price across wallets
         const prevSize = row.size;
         row.size += size;
         row.currentValue += cur;
@@ -199,6 +221,8 @@
           size,
           currentValue: cur,
           cashPnl: pnl,
+          avgPrice: avg,
+          curPrice: Number(p.curPrice) || 0,
         });
       }
     }
@@ -232,18 +256,86 @@
     });
   }
 
-  function renderPortWallets() {
-    const el = $("portWallets");
-    el.innerHTML = TRACKED.map((t) => {
-      const p = profiles.get(t.wallet.toLowerCase());
-      const name = shortName(p?.name || fmtWallet(t.wallet));
-      const pnl = p?.pnl != null ? fmtUsd(p.pnl) : "—";
-      return `<span><a href="https://polymarket.com/profile/${t.wallet}" target="_blank" rel="noopener noreferrer">${name}</a> <b>${pnl}</b> lifetime</span>`;
-    }).join("");
+  function fmtTradeLine(t) {
+    const side = String(t.side || "").toUpperCase();
+    const sideCls = side === "BUY" ? "trade-buy" : side === "SELL" ? "trade-sell" : "";
+    return (
+      `<tr>` +
+      `<td class="num">${fmtWhen(t.timestamp)}</td>` +
+      `<td class="${sideCls}">${side || "—"}</td>` +
+      `<td>${outcomeBadge(t.outcome)}</td>` +
+      `<td class="num">${fmtShares(Number(t.size) || 0)}</td>` +
+      `<td class="num">${fmtCts(Number(t.price) || 0)}</td>` +
+      `</tr>`
+    );
+  }
+
+  function holderTradesHtml(hk) {
+    const cached = holderTrades.get(hk);
+    if (!cached || cached.status === "pending") {
+      return `<p class="sub nest-empty">Loading trades…</p>`;
+    }
+    if (cached.status === "error") {
+      return `<p class="sub nest-empty">Could not load trades.</p>`;
+    }
+    if (!cached.trades.length) {
+      return `<p class="sub nest-empty">No recent trades on this market.</p>`;
+    }
+    return (
+      `<table class="nest-trades">` +
+      `<thead><tr><th>When</th><th>Side</th><th>Out</th><th class="num">Size</th><th class="num">Price</th></tr></thead>` +
+      `<tbody>${cached.trades.map(fmtTradeLine).join("")}</tbody>` +
+      `</table>`
+    );
+  }
+
+  function portDetailRow(r) {
+    const tr = document.createElement("tr");
+    tr.className = "detail-row port-detail-row";
+    tr.dataset.portKey = r.key;
+
+    let body = "";
+    for (const h of r.holders) {
+      const hk = holderKey(r.key, h.wallet);
+      const open = expandedHolders.has(hk);
+      const pnlCls = (h.cashPnl || 0) >= 0 ? "trade-buy" : "trade-sell";
+      body +=
+        `<tr class="holder-row${open ? " open" : ""}" data-holder-key="${hk}" data-wallet="${h.wallet}" data-condition="${r.conditionId || ""}" tabindex="0">` +
+        `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
+        `<td class="trader"><a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer">${shortName(h.name, 22)}</a></td>` +
+        `<td class="num">${fmtUsd(h.currentValue)}</td>` +
+        `<td class="num">${fmtShares(h.size)}</td>` +
+        `<td class="num hide-sm">${fmtCts(h.avgPrice)} / ${fmtCts(h.curPrice)}</td>` +
+        `<td class="num ${pnlCls}">${fmtUsd(h.cashPnl)}</td>` +
+        `</tr>`;
+      if (open) {
+        body +=
+          `<tr class="holder-detail-row">` +
+          `<td colspan="6"><div class="holder-trades">${holderTradesHtml(hk)}</div></td>` +
+          `</tr>`;
+      }
+    }
+
+    tr.innerHTML =
+      `<td colspan="${PORT_COLS}">` +
+      `<div class="port-detail">` +
+      `<table class="holders port-holders">` +
+      `<thead><tr>` +
+      `<th class="expand-h" aria-hidden="true"></th>` +
+      `<th>Sharp</th>` +
+      `<th class="num">Value</th>` +
+      `<th class="num">Shares</th>` +
+      `<th class="num hide-sm">Avg / Now</th>` +
+      `<th class="num">PnL</th>` +
+      `</tr></thead>` +
+      `<tbody>${body}</tbody>` +
+      `</table>` +
+      `</div>` +
+      `</td>`;
+    return tr;
   }
 
   function renderPortfolio() {
-    renderPortWallets();
     const list = filteredPortRows();
     const totalVal = list.reduce((s, r) => s + (r.currentValue || 0), 0);
     const totalPnl = list.reduce((s, r) => s + (r.cashPnl || 0), 0);
@@ -269,12 +361,17 @@
     $("portEmpty").hidden = true;
     const frag = document.createDocumentFragment();
     for (const r of list) {
+      const open = expandedPorts.has(r.key);
       const tr = document.createElement("tr");
+      tr.className = "port-row" + (open ? " open" : "");
+      tr.dataset.portKey = r.key;
+      tr.tabIndex = 0;
       const sharps = r.holders
         .map((h) => `<a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer" title="${fmtUsd(h.currentValue)}">${shortName(h.name, 18)}</a>`)
         .join(", ");
       const pnlCls = (r.cashPnl || 0) >= 0 ? "trade-buy" : "trade-sell";
       tr.innerHTML =
+        `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="num">${fmtUsd(r.currentValue)}</td>` +
         `<td class="market"><span class="mkt-line">${outcomeBadge(r.outcome)}<a href="${marketUrl(r)}" target="_blank" rel="noopener noreferrer"></a></span></td>` +
         `<td class="num">${fmtShares(r.size)}</td>` +
@@ -283,8 +380,53 @@
         `<td class="sharps-cell">${sharps}</td>`;
       tr.querySelector("a").textContent = r.title;
       frag.appendChild(tr);
+      if (open) frag.appendChild(portDetailRow(r));
     }
     body.appendChild(frag);
+  }
+
+  async function loadHolderTrades(hk, wallet, conditionId) {
+    if (!wallet || !conditionId) {
+      holderTrades.set(hk, { status: "empty", trades: [] });
+      renderPortfolio();
+      return;
+    }
+    const cur = holderTrades.get(hk);
+    if (cur && (cur.status === "ready" || cur.status === "pending")) return;
+    holderTrades.set(hk, { status: "pending", trades: [] });
+    renderPortfolio();
+    try {
+      const trades = await fetchHolderTrades(wallet, conditionId);
+      holderTrades.set(hk, { status: "ready", trades });
+    } catch {
+      holderTrades.set(hk, { status: "error", trades: [] });
+    }
+    if (expandedHolders.has(hk)) renderPortfolio();
+  }
+
+  function togglePort(key) {
+    if (!key) return;
+    if (expandedPorts.has(key)) {
+      expandedPorts.delete(key);
+      for (const hk of [...expandedHolders]) {
+        if (hk.startsWith(`${key}|`)) expandedHolders.delete(hk);
+      }
+    } else {
+      expandedPorts.add(key);
+    }
+    renderPortfolio();
+  }
+
+  function toggleHolder(hk, wallet, conditionId) {
+    if (!hk) return;
+    if (expandedHolders.has(hk)) {
+      expandedHolders.delete(hk);
+      renderPortfolio();
+      return;
+    }
+    expandedHolders.add(hk);
+    renderPortfolio();
+    loadHolderTrades(hk, wallet, conditionId);
   }
 
   async function loadPortfolio() {
@@ -292,13 +434,15 @@
     err.hidden = true;
     $("portLoad").disabled = true;
     $("portLoad").textContent = "Loading…";
+    expandedPorts.clear();
+    expandedHolders.clear();
+    holderTrades.clear();
     try {
-      const signal = undefined;
-      await Promise.all(TRACKED.map((t) => loadProfile(t.wallet, signal)));
+      await Promise.all(TRACKED.map((t) => loadProfile(t.wallet)));
       /** @type {Map<string, object[]>} */
       const byWallet = new Map();
       await Promise.all(TRACKED.map(async (t) => {
-        const positions = await fetchAllPositions(t.wallet, signal);
+        const positions = await fetchAllPositions(t.wallet);
         byWallet.set(t.wallet, positions);
       }));
       portRows = aggregatePositions(byWallet);
@@ -327,14 +471,9 @@
 
   function renderActivity() {
     const list = filteredActRows();
-    const wallets = TRACKED.map((t) => {
-      const p = profiles.get(t.wallet.toLowerCase());
-      return shortName(p?.name || t.name || fmtWallet(t.wallet));
-    }).join(", ");
     $("actMeta").innerHTML =
       `<span>events <b>${list.length}</b></span>` +
-      `<span>wallets <b>${TRACKED.length}</b></span>` +
-      `<span>${wallets}</span>`;
+      `<span>wallets <b>${TRACKED.length}</b></span>`;
 
     const body = $("actBody");
     body.innerHTML = "";
@@ -406,6 +545,41 @@
 
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.addEventListener("click", () => showTab(btn.getAttribute("data-tab")));
+  });
+
+  $("portBody").addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    const holderRow = e.target.closest("tr.holder-row");
+    if (holderRow) {
+      toggleHolder(
+        holderRow.dataset.holderKey,
+        holderRow.dataset.wallet,
+        holderRow.dataset.condition,
+      );
+      return;
+    }
+    const portRow = e.target.closest("tr.port-row");
+    if (portRow) togglePort(portRow.dataset.portKey);
+  });
+
+  $("portBody").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (e.target.closest("a")) return;
+    const holderRow = e.target.closest("tr.holder-row");
+    if (holderRow) {
+      e.preventDefault();
+      toggleHolder(
+        holderRow.dataset.holderKey,
+        holderRow.dataset.wallet,
+        holderRow.dataset.condition,
+      );
+      return;
+    }
+    const portRow = e.target.closest("tr.port-row");
+    if (portRow) {
+      e.preventDefault();
+      togglePort(portRow.dataset.portKey);
+    }
   });
 
   $("portLoad").addEventListener("click", () => {

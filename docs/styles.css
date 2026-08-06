@@ -243,7 +243,55 @@ th.expand-h, td.expand {
   line-height: 1;
   transition: transform 0.12s ease;
 }
-tr.market-row.open .chev::before { transform: rotate(90deg); }
+tr.market-row.open .chev::before,
+tr.port-row.open .chev::before,
+tr.holder-row.open .chev::before { transform: rotate(90deg); }
+
+tr.port-row { cursor: pointer; }
+tr.port-row:hover td { background: var(--hover); }
+tr.port-row.open td { background: #f5f5f5; }
+tr.port-row td { vertical-align: middle; }
+
+tr.holder-row { cursor: pointer; }
+tr.holder-row:hover td { background: var(--hover); }
+tr.holder-row.open td { background: #f0f0f0; }
+
+.port-detail {
+  padding: 0.55rem 0.75rem 0.75rem 1.4rem;
+}
+table.port-holders { margin: 0; }
+
+tr.holder-detail-row td {
+  padding: 0;
+  background: #f3f3f3;
+  border-bottom: 1px solid var(--line);
+}
+.holder-trades {
+  padding: 0.4rem 0.65rem 0.55rem 1.5rem;
+}
+.nest-empty { margin: 0.35rem 0; }
+table.nest-trades {
+  width: auto;
+  min-width: 280px;
+  font-size: 0.75rem;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+table.nest-trades th,
+table.nest-trades td {
+  padding: 0.22rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+table.nest-trades tr:last-child td { border-bottom: none; }
+table.nest-trades th {
+  position: static;
+  background: #fafafa;
+}
+table.nest-trades .yn {
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.65rem;
+}
 
 .shares-wrap {
   display: inline-flex;
@@ -337,12 +385,6 @@ table.holders .last-trade {
   text-decoration: none;
 }
 .sharps-cell a:hover { text-decoration: underline; }
-
-#portWallets a {
-  color: var(--fg);
-  text-decoration: none;
-}
-#portWallets a:hover { text-decoration: underline; }
 
 #actBody a {
   color: var(--fg);
