@@ -12,6 +12,9 @@
     { wallet: "0x7bc14171ccb0d3e6bac219ec6a76211826e28db4", name: "coali10" },
     { wallet: "0x60a92c8620846d81f5ea17b0564e0d4b7c545a71", name: "paddaa" },
     { wallet: "0x2b9dbf4b6e0e11309a9d6d2a09b72f65f652adc0", name: "seal7" },
+    { wallet: "0xc851cd9bee7d262afd78674f861f9f576a12cd2a", name: "betwick" },
+    { wallet: "0x1cc16713196d456f86fa9c7387dd326a7f73b8df", name: "Wickier" },
+    { wallet: "0xde7be6d489bce070a959e0cb813128ae659b5f4b", name: "wan123" },
   ];
 
   const $ = (id) => document.getElementById(id);
