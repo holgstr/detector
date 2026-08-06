@@ -20,6 +20,7 @@ const expanded = new Set();
  * @property {"BUY"|"SELL"|string} side
  * @property {number} size
  * @property {number} timestamp
+ * @property {number} price
  * @property {string} outcome
  * @property {"pending"|"ready"|"error"|"empty"} status
  */
@@ -52,6 +53,7 @@ const expanded = new Set();
  * @property {number} yes_qualified_count
  * @property {number} no_qualified_count
  * @property {number} total_qualified_size
+ * @property {number} net_shares_abs
  * @property {string} stronger
  * @property {QualifiedHolder[]} yes_holders
  * @property {QualifiedHolder[]} no_holders
@@ -130,6 +132,7 @@ async function listMarkets({ tagSlug, minVolume24, signal }) {
         yes_qualified_count: 0,
         no_qualified_count: 0,
         total_qualified_size: 0,
+        net_shares_abs: 0,
         stronger: "tie",
         yes_holders: [],
         no_holders: [],
@@ -199,6 +202,7 @@ async function computeStrength(conditionId, signal) {
       yes_qualified_count: 0,
       no_qualified_count: 0,
       total_qualified_size: 0,
+      net_shares_abs: 0,
       stronger: "tie",
       strength_status: "empty",
       yes_holders: [],
@@ -212,22 +216,37 @@ async function computeStrength(conditionId, signal) {
     pnls.set(w, await lifetimePnL(w, signal));
   }, signal);
 
+  /** @type {Map<string, {wallet:string, name:string, yes:number, no:number, pnl:number}>} */
+  const byWallet = new Map();
+  for (const h of holders) {
+    const pnl = pnls.get(h.wallet);
+    if (pnl == null || !(pnl > MIN_PNL)) continue;
+    let row = byWallet.get(h.wallet);
+    if (!row) {
+      row = { wallet: h.wallet, name: h.name, yes: 0, no: 0, pnl };
+      byWallet.set(h.wallet, row);
+    }
+    if (h.name && !row.name) row.name = h.name;
+    if (h.side === "yes") row.yes += h.size;
+    else row.no += h.size;
+  }
+
   /** @type {QualifiedHolder[]} */
   const yesHolders = [];
   /** @type {QualifiedHolder[]} */
   const noHolders = [];
-  for (const h of holders) {
-    const pnl = pnls.get(h.wallet);
-    if (pnl == null || !(pnl > MIN_PNL)) continue;
-    const row = {
-      wallet: h.wallet,
-      name: h.name,
-      size: h.size,
-      pnl,
+  for (const row of byWallet.values()) {
+    const net = row.yes - row.no;
+    if (net === 0) continue;
+    const entry = {
+      wallet: row.wallet,
+      name: row.name,
+      size: Math.abs(net),
+      pnl: row.pnl,
       last_trade: null,
     };
-    if (h.side === "yes") yesHolders.push(row);
-    else noHolders.push(row);
+    if (net > 0) yesHolders.push(entry);
+    else noHolders.push(entry);
   }
 
   yesHolders.sort((a, b) => b.size - a.size);
@@ -250,6 +269,7 @@ async function computeStrength(conditionId, signal) {
     yes_qualified_count: yesHolders.length,
     no_qualified_count: noHolders.length,
     total_qualified_size: total,
+    net_shares_abs: Math.abs(yesSize - noSize),
     stronger,
     strength_status: total > 0 ? "ready" : "empty",
     yes_holders: yesHolders,
@@ -320,13 +340,20 @@ function fmtWhen(ts) {
   return d.toLocaleDateString();
 }
 
+function fmtTradePrice(p) {
+  if (p == null || Number.isNaN(p)) return "";
+  return `${Math.round(p * 100)}¢`;
+}
+
 function fmtLastTrade(t) {
   if (!t || t.status === "pending") return `<span class="pending">…</span>`;
   if (t.status === "error") return `<span class="na">err</span>`;
   if (t.status === "empty" || !t.side) return `<span class="na">n/a</span>`;
   const side = String(t.side).toUpperCase();
   const cls = side === "BUY" ? "trade-buy" : side === "SELL" ? "trade-sell" : "";
-  return `<span class="${cls}">${side}</span> ${fmtShares(t.size)} <span class="muted">${t.outcome || ""} · ${fmtWhen(t.timestamp)}</span>`;
+  const px = fmtTradePrice(t.price);
+  const meta = [t.outcome || "", px, fmtWhen(t.timestamp)].filter(Boolean).join(" · ");
+  return `<span class="${cls}">${side}</span> ${fmtShares(t.size)} <span class="muted">${meta}</span>`;
 }
 
 /** Donut: green = Yes share of total, red = No. */
@@ -348,12 +375,13 @@ async function fetchLastTrade(wallet, conditionId, signal) {
   });
   const trades = await getJSON(`${DATA}/trades?${q}`, signal);
   if (!Array.isArray(trades) || !trades.length) {
-    return { side: "", size: 0, timestamp: 0, outcome: "", status: "empty" };
+    return { side: "", size: 0, price: 0, timestamp: 0, outcome: "", status: "empty" };
   }
   const t = trades[0];
   return {
     side: String(t.side || ""),
     size: Number(t.size) || 0,
+    price: Number(t.price) || 0,
     timestamp: Number(t.timestamp) || 0,
     outcome: String(t.outcome || ""),
     status: "ready",
@@ -365,14 +393,14 @@ async function fillLastTrades(market, signal) {
   const need = all.filter((h) => !h.last_trade || h.last_trade.status === "pending");
   if (!need.length) return;
   for (const h of need) {
-    h.last_trade = { side: "", size: 0, timestamp: 0, outcome: "", status: "pending" };
+    h.last_trade = { side: "", size: 0, price: 0, timestamp: 0, outcome: "", status: "pending" };
   }
   await mapPool(need, PNL_CONCURRENCY, async (h) => {
     try {
       h.last_trade = await fetchLastTrade(h.wallet, market.condition_id, signal);
     } catch (e) {
       if (e?.name === "AbortError") throw e;
-      h.last_trade = { side: "", size: 0, timestamp: 0, outcome: "", status: "error" };
+      h.last_trade = { side: "", size: 0, price: 0, timestamp: 0, outcome: "", status: "error" };
     }
   }, signal);
 }
@@ -395,6 +423,9 @@ function filteredRows() {
     if (key === "stronger") {
       av = strongerRank[a.stronger] ?? 0;
       bv = strongerRank[b.stronger] ?? 0;
+      if (a.strength_status !== "ready") av = null;
+      if (b.strength_status !== "ready") bv = null;
+    } else if (key === "net_shares_abs") {
       if (a.strength_status !== "ready") av = null;
       if (b.strength_status !== "ready") bv = null;
     }
@@ -433,7 +464,7 @@ function holdersTable(sideLabel, holders) {
     `<div class="side-block side-${sideLabel.toLowerCase()}">` +
     `<div class="side-label">${sideLabel}</div>` +
     `<table class="holders">` +
-    `<thead><tr><th>Trader</th><th class="num">Shares</th><th class="num">Lifetime PnL</th><th>Last trade</th></tr></thead>` +
+    `<thead><tr><th>Trader</th><th class="num">Net shares</th><th class="num">Lifetime PnL</th><th>Last trade</th></tr></thead>` +
     `<tbody>${rowsHtml}</tbody>` +
     `</table>` +
     `</div>`
