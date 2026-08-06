@@ -512,9 +512,8 @@
 
   function renderActivity() {
     const list = filteredActRows();
-    const raw = actRows.length;
     $("actMeta").innerHTML =
-      `<span>events <b>${list.length}</b>${list.length !== raw ? ` <span class="muted">(${raw} raw)</span>` : ""}</span>` +
+      `<span>events <b>${list.length}</b></span>` +
       `<span>wallets <b>${TRACKED.length}</b></span>`;
 
     const body = $("actBody");
