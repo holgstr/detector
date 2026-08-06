@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>detector · markets</title>
+  <title>detector</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -11,61 +11,143 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Markets</h1>
-    <p class="sub">Active Yes/No markets by tag and 24h volume. Sharps = top holders with lifetime PnL &gt; $100k (net shares). Filters apply after load.</p>
+    <header class="top">
+      <h1>detector</h1>
+      <nav class="tabs" role="tablist" aria-label="Main">
+        <button type="button" class="tab active" role="tab" aria-selected="true" data-tab="markets">Markets</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-tab="portfolio">Portfolio</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-tab="activity">Activity</button>
+      </nav>
+    </header>
 
-    <div class="bar">
-      <label class="field search">Search
-        <input id="q" type="search" placeholder="Filter loaded markets" autocomplete="off" />
-      </label>
-      <label class="field">Tag
-        <select id="tag">
-          <option value="elections" selected>elections</option>
-          <option value="politics">politics</option>
-          <option value="geopolitics">geopolitics</option>
-          <option value="crypto">crypto</option>
-          <option value="sports">sports</option>
-        </select>
-      </label>
-      <label class="field">Min 24h vol
-        <input id="minVol" type="number" min="0" step="1000" value="10000" />
-      </label>
-      <label class="field" title="Minimum sharps on the net-favored side (Yes or No)">Min sharps (side)
-        <input id="minFavoredSharps" type="number" min="0" step="1" value="0" />
-      </label>
-      <label class="field" title="At least this many sharps traded this market in the last Y hours">Min recent sharps
-        <input id="minRecentSharps" type="number" min="0" step="1" value="0" />
-      </label>
-      <label class="field" title="Lookback window for recent sharp trades">Within hours
-        <input id="recentHours" type="number" min="1" step="1" value="24" />
-      </label>
-      <label class="field" title="Hide markets where Yes or No price is above this (¢). 0 = off.">Max price ¢
-        <input id="maxPriceCts" type="number" min="0" max="100" step="1" value="0" />
-      </label>
-      <button id="load" type="button">Load</button>
-    </div>
+    <section id="tab-markets" class="tab-panel active" role="tabpanel">
+      <p class="sub">Active Yes/No markets by tag and 24h volume. Sharps = top holders with lifetime PnL &gt; $100k (net shares). Filters apply after load.</p>
 
-    <div class="meta" id="meta"></div>
-    <div class="meta"><span>tag <b id="tagLabel">—</b></span></div>
-    <div id="err" class="err" hidden></div>
+      <div class="bar">
+        <label class="field search">Search
+          <input id="q" type="search" placeholder="Filter loaded markets" autocomplete="off" />
+        </label>
+        <label class="field">Tag
+          <select id="tag">
+            <option value="elections" selected>elections</option>
+            <option value="politics">politics</option>
+            <option value="geopolitics">geopolitics</option>
+            <option value="crypto">crypto</option>
+            <option value="sports">sports</option>
+          </select>
+        </label>
+        <label class="field">Min 24h vol
+          <input id="minVol" type="number" min="0" step="1000" value="10000" />
+        </label>
+        <label class="field" title="Minimum sharps on the net-favored side (Yes or No)">Min sharps (side)
+          <input id="minFavoredSharps" type="number" min="0" step="1" value="0" />
+        </label>
+        <label class="field" title="At least this many sharps traded this market in the last Y hours">Min recent sharps
+          <input id="minRecentSharps" type="number" min="0" step="1" value="0" />
+        </label>
+        <label class="field" title="Lookback window for recent sharp trades">Within hours
+          <input id="recentHours" type="number" min="1" step="1" value="24" />
+        </label>
+        <label class="field" title="Hide markets where Yes or No price is above this (¢). 0 = off.">Max price ¢
+          <input id="maxPriceCts" type="number" min="0" max="100" step="1" value="0" />
+        </label>
+        <button id="load" type="button">Load</button>
+      </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th class="expand-h" aria-hidden="true"></th>
-          <th class="sortable num active" data-key="volume_24hr" data-dir="↓">24h vol</th>
-          <th class="sortable" data-key="question">Market</th>
-          <th class="num hide-sm">Y / N</th>
-          <th class="sortable num" data-key="net_shares_abs">Shares Y/N</th>
-          <th class="sortable num" data-key="net_strength_abs">Strength Y/N</th>
-          <th class="sortable num" data-key="net_traders_abs">Traders Y/N</th>
-          <th class="sortable num hide-sm" data-key="stronger">Side</th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <p id="empty" class="sub" hidden>No markets match.</p>
+      <div class="meta" id="meta"></div>
+      <div class="meta"><span>tag <b id="tagLabel">—</b></span></div>
+      <div id="err" class="err" hidden></div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="expand-h" aria-hidden="true"></th>
+            <th class="sortable num active" data-key="volume_24hr" data-dir="↓">24h vol</th>
+            <th class="sortable" data-key="question">Market</th>
+            <th class="num hide-sm">Y / N</th>
+            <th class="sortable num" data-key="net_shares_abs">Shares Y/N</th>
+            <th class="sortable num" data-key="net_strength_abs">Strength Y/N</th>
+            <th class="sortable num" data-key="net_traders_abs">Traders Y/N</th>
+            <th class="sortable num hide-sm" data-key="stronger">Side</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <p id="empty" class="sub" hidden>No markets match.</p>
+    </section>
+
+    <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
+      <p class="sub">Open positions aggregated across tracked sharps — same fields as Polymarket profile portfolios, merged by market/outcome.</p>
+      <div class="bar">
+        <label class="field search">Search
+          <input id="portQ" type="search" placeholder="Filter positions" autocomplete="off" />
+        </label>
+        <label class="field" title="Hide positions with current value under this">Min value $
+          <input id="portMinValue" type="number" min="0" step="10" value="10" />
+        </label>
+        <button id="portLoad" type="button">Refresh</button>
+      </div>
+      <div class="meta" id="portMeta"></div>
+      <div class="meta" id="portWallets"></div>
+      <div id="portErr" class="err" hidden></div>
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable num" data-port-sort="currentValue" data-dir="">Value</th>
+            <th class="sortable" data-port-sort="title">Market</th>
+            <th>Outcome</th>
+            <th class="num">Shares</th>
+            <th class="num hide-sm">Avg / Now</th>
+            <th class="sortable num" data-port-sort="cashPnl">PnL</th>
+            <th>Sharps</th>
+          </tr>
+        </thead>
+        <tbody id="portBody"></tbody>
+      </table>
+      <p id="portEmpty" class="sub" hidden>No positions match.</p>
+    </section>
+
+    <section id="tab-activity" class="tab-panel" role="tabpanel" hidden>
+      <p class="sub">Recent activity merged from tracked sharps — same trade feed as Polymarket profiles, newest first.</p>
+      <div class="bar">
+        <label class="field search">Search
+          <input id="actQ" type="search" placeholder="Filter activity" autocomplete="off" />
+        </label>
+        <label class="field">Type
+          <select id="actType">
+            <option value="TRADE" selected>TRADE</option>
+            <option value="">All</option>
+            <option value="REDEEM">REDEEM</option>
+            <option value="MERGE">MERGE</option>
+            <option value="SPLIT">SPLIT</option>
+          </select>
+        </label>
+        <label class="field">Per wallet
+          <input id="actLimit" type="number" min="20" max="500" step="20" value="100" />
+        </label>
+        <button id="actLoad" type="button">Refresh</button>
+      </div>
+      <div class="meta" id="actMeta"></div>
+      <div id="actErr" class="err" hidden></div>
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Sharp</th>
+            <th>Side</th>
+            <th class="num">Size</th>
+            <th class="num hide-sm">Price</th>
+            <th class="num hide-sm">USDC</th>
+            <th>Market</th>
+            <th class="hide-sm">Outcome</th>
+          </tr>
+        </thead>
+        <tbody id="actBody"></tbody>
+      </table>
+      <p id="actEmpty" class="sub" hidden>No activity match.</p>
+    </section>
   </div>
   <script src="./app.js" defer></script>
+  <script src="./sharps.js" defer></script>
 </body>
 </html>
