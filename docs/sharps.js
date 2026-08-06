@@ -83,7 +83,9 @@
     const ms = ts > 1e12 ? ts : ts * 1000;
     const d = new Date(ms);
     if (Number.isNaN(d.getTime())) return "—";
-    const hr = Math.max(0, Math.round((Date.now() - d.getTime()) / 3600000));
+    const mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
+    if (mins < 60) return `${mins}m`;
+    const hr = Math.round(mins / 60);
     if (hr < 48) return `${hr}h`;
     return `${Math.round(hr / 24)}d`;
   }
@@ -457,9 +459,48 @@
     }
   }
 
+  function actGroupKey(a) {
+    return [
+      String(a.proxyWallet || "").toLowerCase(),
+      String(a.conditionId || a.slug || a.title || ""),
+      String(a.side || a.type || "").toUpperCase(),
+      String(a.outcome || "").toLowerCase(),
+      String(a.type || "TRADE").toUpperCase(),
+    ].join("|");
+  }
+
+  /** Merge consecutive same trader/market/side/outcome rows; size-weighted avg price. */
+  function aggregateActRows(rows) {
+    const out = [];
+    for (const a of rows) {
+      const prev = out[out.length - 1];
+      if (prev && actGroupKey(prev) === actGroupKey(a)) {
+        const sizeA = Number(prev.size) || 0;
+        const sizeB = Number(a.size) || 0;
+        const total = sizeA + sizeB;
+        const priceA = Number(prev.price) || 0;
+        const priceB = Number(a.price) || 0;
+        prev.size = total;
+        prev.price = total > 0 ? (sizeA * priceA + sizeB * priceB) / total : priceA;
+        prev.usdcSize = (Number(prev.usdcSize) || 0) + (Number(a.usdcSize) || 0);
+        // keep prev.timestamp (newer — feed is newest-first)
+        prev._parts = (prev._parts || 1) + 1;
+      } else {
+        out.push({
+          ...a,
+          size: Number(a.size) || 0,
+          price: a.price != null ? Number(a.price) : null,
+          usdcSize: a.usdcSize != null ? Number(a.usdcSize) : null,
+          _parts: 1,
+        });
+      }
+    }
+    return out;
+  }
+
   function filteredActRows() {
     const needle = $("actQ").value.trim().toLowerCase();
-    let list = actRows;
+    let list = aggregateActRows(actRows);
     if (needle) {
       list = list.filter((a) => {
         const hay = [a.title, a.outcome, a.name, a.side, a.type, a.slug].join(" ").toLowerCase();
@@ -471,8 +512,9 @@
 
   function renderActivity() {
     const list = filteredActRows();
+    const raw = actRows.length;
     $("actMeta").innerHTML =
-      `<span>events <b>${list.length}</b></span>` +
+      `<span>events <b>${list.length}</b>${list.length !== raw ? ` <span class="muted">(${raw} raw)</span>` : ""}</span>` +
       `<span>wallets <b>${TRACKED.length}</b></span>`;
 
     const body = $("actBody");
@@ -488,8 +530,9 @@
       const side = String(a.side || a.type || "").toUpperCase();
       const sideCls = side === "BUY" ? "trade-buy" : side === "SELL" ? "trade-sell" : "";
       const name = shortName(a.name || profiles.get(String(a.proxyWallet || "").toLowerCase())?.name || fmtWallet(a.proxyWallet));
+      const title = a._parts > 1 ? `${a._parts} fills` : "";
       tr.innerHTML =
-        `<td class="num">${fmtWhen(a.timestamp)}</td>` +
+        `<td class="num" title="${title}">${fmtWhen(a.timestamp)}</td>` +
         `<td><a class="act-trader" href="https://polymarket.com/profile/${a.proxyWallet}" target="_blank" rel="noopener noreferrer">${name}</a></td>` +
         `<td class="${sideCls}">${side || "—"}</td>` +
         `<td class="num">${fmtShares(a.size)}</td>` +
