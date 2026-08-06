@@ -438,10 +438,22 @@ function recentSharpCount(m, withinHours) {
   return n;
 }
 
+function maxOutcomeCents(m) {
+  const p = m.outcome_prices || [];
+  if (p.length < 2) return null;
+  return Math.max(p[0], p[1]) * 100;
+}
+
 function passesSharpFilters(m) {
   const minFavored = Math.max(0, Number($("minFavoredSharps").value) || 0);
   const minRecent = Math.max(0, Number($("minRecentSharps").value) || 0);
   const hours = Math.max(1, Number($("recentHours").value) || 24);
+  const maxPrice = Number($("maxPriceCts").value);
+
+  if (Number.isFinite(maxPrice) && maxPrice > 0) {
+    const cts = maxOutcomeCents(m);
+    if (cts == null || cts > maxPrice) return false;
+  }
 
   if (minFavored > 0) {
     if (m.strength_status !== "ready") return false;
@@ -452,6 +464,22 @@ function passesSharpFilters(m) {
     if (recentSharpCount(m, hours) < minRecent) return false;
   }
   return true;
+}
+
+/** Absolute imbalance for Shares / Strength / Traders (direction-agnostic). */
+function netAbsForSort(m, key) {
+  if (m.strength_status !== "ready") return null;
+  if (key === "net_shares_abs") {
+    return Math.abs((m.yes_qualified_size || 0) - (m.no_qualified_size || 0));
+  }
+  if (key === "net_traders_abs") {
+    return Math.abs((m.yes_qualified_count || 0) - (m.no_qualified_count || 0));
+  }
+  if (key === "net_strength_abs") {
+    if (m.yes_strength == null || m.no_strength == null) return null;
+    return Math.abs(m.yes_strength - m.no_strength);
+  }
+  return m[key];
 }
 
 function filteredRows() {
@@ -466,25 +494,59 @@ function filteredRows() {
   const dir = sortDir === "asc" ? 1 : -1;
   const key = sortKey;
   const strongerRank = { yes: 1, no: -1, tie: 0 };
+  const netKeys = new Set(["net_shares_abs", "net_traders_abs", "net_strength_abs"]);
+
   return [...list].sort((a, b) => {
-    let av = a[key];
-    let bv = b[key];
+    let av;
+    let bv;
     if (key === "stronger") {
       av = strongerRank[a.stronger] ?? 0;
       bv = strongerRank[b.stronger] ?? 0;
       if (a.strength_status !== "ready") av = null;
       if (b.strength_status !== "ready") bv = null;
-    } else if (key === "net_shares_abs" || key === "net_traders_abs" || key === "net_strength_abs") {
-      if (a.strength_status !== "ready") av = null;
-      if (b.strength_status !== "ready") bv = null;
+    } else if (netKeys.has(key)) {
+      av = netAbsForSort(a, key);
+      bv = netAbsForSort(b, key);
+    } else {
+      av = a[key];
+      bv = b[key];
     }
+
     const aNull = av == null || (typeof av === "number" && Number.isNaN(av));
     const bNull = bv == null || (typeof bv === "number" && Number.isNaN(bv));
     if (aNull && bNull) return 0;
     if (aNull) return 1;
     if (bNull) return -1;
-    if (av === bv) return b.volume_24hr - a.volume_24hr;
-    return av > bv ? dir : -dir;
+    if (av !== bv) return av > bv ? dir : -dir;
+
+    // Tie-break net sorts: larger majority side, then more total, then volume
+    if (netKeys.has(key)) {
+      const aMaj = key === "net_traders_abs"
+        ? Math.max(a.yes_qualified_count || 0, a.no_qualified_count || 0)
+        : key === "net_shares_abs"
+          ? Math.max(a.yes_qualified_size || 0, a.no_qualified_size || 0)
+          : Math.max(a.yes_strength || 0, a.no_strength || 0);
+      const bMaj = key === "net_traders_abs"
+        ? Math.max(b.yes_qualified_count || 0, b.no_qualified_count || 0)
+        : key === "net_shares_abs"
+          ? Math.max(b.yes_qualified_size || 0, b.no_qualified_size || 0)
+          : Math.max(b.yes_strength || 0, b.no_strength || 0);
+      if (aMaj !== bMaj) return aMaj > bMaj ? dir : -dir;
+
+      const aTot = key === "net_traders_abs"
+        ? (a.yes_qualified_count || 0) + (a.no_qualified_count || 0)
+        : key === "net_shares_abs"
+          ? (a.yes_qualified_size || 0) + (a.no_qualified_size || 0)
+          : 1;
+      const bTot = key === "net_traders_abs"
+        ? (b.yes_qualified_count || 0) + (b.no_qualified_count || 0)
+        : key === "net_shares_abs"
+          ? (b.yes_qualified_size || 0) + (b.no_qualified_size || 0)
+          : 1;
+      if (aTot !== bTot) return aTot > bTot ? dir : -dir;
+    }
+
+    return b.volume_24hr - a.volume_24hr;
   });
 }
 
@@ -712,6 +774,7 @@ $("q").addEventListener("input", render);
 $("minFavoredSharps").addEventListener("input", render);
 $("minRecentSharps").addEventListener("input", render);
 $("recentHours").addEventListener("input", render);
+$("maxPriceCts").addEventListener("input", render);
 $("load").addEventListener("click", load);
 $("tag").addEventListener("change", load);
 $("minVol").addEventListener("keydown", (e) => {
