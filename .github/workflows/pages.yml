@@ -1,0 +1,112 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  deployments: write
+  actions: write
+
+# Only one Pages deploy at a time; cancel superseded runs so they cannot
+# leave ghost deployment_queued locks behind.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  # Clear wedged Pages state and force Actions as the source.
+  # Legacy "Deploy from a branch" auto-fires pages-build-deployment, which
+  # has been stuck in deployment_queued for this repo (~10m timeouts).
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Unwedge Pages + switch to Actions source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+
+          echo "::group::Cancel in-progress pages-build-deployment runs"
+          for id in $(gh run list --repo "$REPO" --workflow=pages-build-deployment --status in_progress --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
+            echo "cancel run $id"
+            gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
+          done
+          for id in $(gh run list --repo "$REPO" --workflow=pages-build-deployment --status queued --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
+            echo "cancel queued run $id"
+            gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
+          done
+          echo "::endgroup::"
+
+          echo "::group::Cancel + delete github-pages deployments"
+          for sha in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].sha' 2>/dev/null || true); do
+            echo "cancel pages deployment $sha"
+            gh api -X POST "repos/$REPO/pages/deployments/$sha/cancel" >/dev/null 2>&1 || true
+          done
+          for id in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].id' 2>/dev/null || true); do
+            echo "delete deployment $id"
+            gh api -X POST "repos/$REPO/deployments/$id/statuses" -f state=inactive >/dev/null 2>&1 || true
+            gh api -X DELETE "repos/$REPO/deployments/$id" >/dev/null 2>&1 || true
+          done
+          echo "::endgroup::"
+
+          echo "::group::Ensure Pages build_type=workflow"
+          # Prefer in-place switch (avoids delete races). Fall back to delete+create.
+          if gh api -X PUT "repos/$REPO/pages" -f build_type=workflow; then
+            echo "updated existing site to workflow"
+          else
+            echo "PUT failed; recreate"
+            gh api -X DELETE "repos/$REPO/pages" >/dev/null 2>&1 || true
+            sleep 8
+            ok=0
+            for attempt in 1 2 3 4 5 6; do
+              if gh api -X POST "repos/$REPO/pages" -f build_type=workflow; then
+                echo "created on attempt $attempt"
+                ok=1
+                break
+              fi
+              echo "create attempt $attempt failed; sleeping"
+              sleep 5
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::Could not create Pages site with build_type=workflow"
+              exit 1
+            fi
+          fi
+          gh api "repos/$REPO/pages" --jq '{status,build_type,html_url}'
+          echo "::endgroup::"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # Fail fast: previous deploys sat in deployment_queued for the full 10m.
+    timeout-minutes: 3
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          # 90s is enough for a healthy deploy; hanging forever helps no one.
+          timeout: 90000
