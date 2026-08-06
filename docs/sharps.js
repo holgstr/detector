@@ -495,8 +495,7 @@
         `<td class="num">${fmtShares(a.size)}</td>` +
         `<td class="num hide-sm">${a.price != null ? fmtCts(a.price) : "—"}</td>` +
         `<td class="num hide-sm">${a.usdcSize != null ? fmtUsd(a.usdcSize) : "—"}</td>` +
-        `<td class="market"><a class="act-mkt" href="${marketUrl(a)}" target="_blank" rel="noopener noreferrer"></a></td>` +
-        `<td class="hide-sm">${a.outcome || "—"}</td>`;
+        `<td class="market"><span class="mkt-line">${outcomeBadge(a.outcome)}<a class="act-mkt" href="${marketUrl(a)}" target="_blank" rel="noopener noreferrer"></a></span></td>`;
       tr.querySelector("a.act-mkt").textContent = a.title || a.slug || "—";
       frag.appendChild(tr);
     }
