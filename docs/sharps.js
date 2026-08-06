@@ -9,6 +9,9 @@
   const TRACKED = [
     { wallet: "0x23d81ba9371e576015c1e562db09c689f56b0288", name: "flawfence" },
     { wallet: "0x614dc8d3542c12103d2c6a3553fd761e391d1546", name: "mr.ozi" },
+    { wallet: "0x7bc14171ccb0d3e6bac219ec6a76211826e28db4", name: "coali10" },
+    { wallet: "0x60a92c8620846d81f5ea17b0564e0d4b7c545a71", name: "paddaa" },
+    { wallet: "0x2b9dbf4b6e0e11309a9d6d2a09b72f65f652adc0", name: "seal7" },
   ];
 
   const $ = (id) => document.getElementById(id);
@@ -79,6 +82,14 @@
     if (p.eventSlug) return `https://polymarket.com/event/${p.eventSlug}`;
     if (p.slug) return `https://polymarket.com/market/${p.slug}`;
     return `https://polymarket.com/profile/${p.proxyWallet || ""}`;
+  }
+
+  function outcomeBadge(outcome) {
+    const o = String(outcome || "").trim().toLowerCase();
+    if (o === "yes") return '<span class="yn yn-y" title="Yes">Y</span>';
+    if (o === "no") return '<span class="yn yn-n" title="No">N</span>';
+    const letter = String(outcome || "?").trim().charAt(0).toUpperCase() || "?";
+    return `<span class="yn yn-other" title="${String(outcome || "").replace(/"/g, "&quot;")}">${letter}</span>`;
   }
 
   async function loadProfile(wallet, signal) {
@@ -262,8 +273,7 @@
       const pnlCls = (r.cashPnl || 0) >= 0 ? "trade-buy" : "trade-sell";
       tr.innerHTML =
         `<td class="num">${fmtUsd(r.currentValue)}</td>` +
-        `<td class="market"><a href="${marketUrl(r)}" target="_blank" rel="noopener noreferrer"></a></td>` +
-        `<td>${r.outcome}</td>` +
+        `<td class="market"><span class="mkt-line">${outcomeBadge(r.outcome)}<a href="${marketUrl(r)}" target="_blank" rel="noopener noreferrer"></a></span></td>` +
         `<td class="num">${fmtShares(r.size)}</td>` +
         `<td class="num hide-sm">${fmtCts(r.avgPrice)} / ${fmtCts(r.curPrice)}</td>` +
         `<td class="num ${pnlCls}">${fmtUsd(r.cashPnl)}</td>` +

@@ -185,6 +185,36 @@ td.market a {
   text-decoration: none;
 }
 td.market a:hover { text-decoration: underline; }
+
+.mkt-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.yn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 3px;
+  font: 600 0.7rem/1 var(--mono);
+  letter-spacing: 0;
+}
+.yn-y {
+  color: var(--yes);
+  background: color-mix(in srgb, var(--yes) 16%, #fff);
+}
+.yn-n {
+  color: var(--no);
+  background: color-mix(in srgb, var(--no) 14%, #fff);
+}
+.yn-other {
+  color: var(--muted);
+  background: #eee;
+}
 td.market .evt {
   display: block;
   margin-top: 0.1rem;
