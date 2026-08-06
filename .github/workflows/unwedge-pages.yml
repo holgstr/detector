@@ -1,0 +1,52 @@
+name: Unwedge Pages
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/unwedge-pages.yml"
+
+permissions:
+  contents: read
+  pages: write
+  deployments: write
+  actions: write
+
+jobs:
+  unwedge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel stuck Pages deployments + delete records
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+
+          echo "::group::Current Pages status"
+          gh api "repos/$REPO/pages" || true
+          echo "::endgroup::"
+
+          echo "::group::Cancel by SHA"
+          mapfile -t SHAS < <(gh api "repos/$REPO/deployments?environment=github-pages&per_page=30" --jq '.[].sha' || true)
+          for sha in "${SHAS[@]}"; do
+            echo -n "cancel $sha → "
+            code=$(gh api -X POST "repos/$REPO/pages/deployments/$sha/cancel" -i 2>/dev/null | awk 'NR==1{print $2}' || echo fail)
+            echo "$code"
+          done
+          echo "::endgroup::"
+
+          echo "::group::Mark inactive + delete deployment records"
+          mapfile -t IDS < <(gh api "repos/$REPO/deployments?environment=github-pages&per_page=30" --jq '.[].id' || true)
+          for id in "${IDS[@]}"; do
+            gh api -X POST "repos/$REPO/deployments/$id/statuses" -f state=inactive >/dev/null 2>&1 || true
+            echo -n "delete $id → "
+            gh api -X DELETE "repos/$REPO/deployments/$id" -i 2>/dev/null | awk 'NR==1{print $2}' || echo fail
+          done
+          echo "::endgroup::"
+
+          echo "::group::Request fresh Pages build"
+          gh api -X POST "repos/$REPO/pages/builds" || true
+          sleep 2
+          gh api "repos/$REPO/pages" || true
+          echo "::endgroup::"
