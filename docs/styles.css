@@ -183,14 +183,14 @@ tr.market-row.open .chev::before { transform: rotate(90deg); }
 .shares-text { white-space: nowrap; }
 
 .donut {
-  --yes: 50;
+  --yes-pct: 50;
   width: 0.95rem;
   height: 0.95rem;
   border-radius: 50%;
   flex: 0 0 auto;
   background: conic-gradient(
-    var(--yes) 0 calc(var(--yes) * 1%),
-    var(--no) calc(var(--yes) * 1%) 100%
+    var(--yes) 0 calc(var(--yes-pct) * 1%),
+    var(--no) calc(var(--yes-pct) * 1%) 100%
   );
   -webkit-mask: radial-gradient(farthest-side, transparent 55%, #000 56%);
   mask: radial-gradient(farthest-side, transparent 55%, #000 56%);
