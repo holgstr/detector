@@ -39,6 +39,9 @@
       <label class="field" title="Lookback window for recent sharp trades">Within hours
         <input id="recentHours" type="number" min="1" step="1" value="24" />
       </label>
+      <label class="field" title="Hide markets where Yes or No price is above this (¢). 0 = off.">Max price ¢
+        <input id="maxPriceCts" type="number" min="0" max="100" step="1" value="0" />
+      </label>
       <button id="load" type="button">Load</button>
     </div>
 
