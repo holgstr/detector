@@ -12,6 +12,15 @@ let rows = [];
 let sortKey = "volume_24hr";
 let sortDir = "desc";
 let strengthAbort = null;
+/** @type {Set<string>} */
+const expanded = new Set();
+
+/**
+ * @typedef {object} QualifiedHolder
+ * @property {string} wallet
+ * @property {number} size
+ * @property {number} pnl
+ */
 
 /**
  * @typedef {object} MarketRow
@@ -33,6 +42,8 @@ let strengthAbort = null;
  * @property {number} no_qualified_count
  * @property {number} total_qualified_size
  * @property {string} stronger
+ * @property {QualifiedHolder[]} yes_holders
+ * @property {QualifiedHolder[]} no_holders
  */
 
 async function getJSON(url, signal) {
@@ -109,6 +120,8 @@ async function listMarkets({ tagSlug, minVolume24, signal }) {
         no_qualified_count: 0,
         total_qualified_size: 0,
         stronger: "tie",
+        yes_holders: [],
+        no_holders: [],
       });
     }
     const next = page.next_cursor || "";
@@ -151,10 +164,6 @@ async function computeStrength(conditionId, signal) {
     `${DATA}/holders?market=${encodeURIComponent(conditionId)}&limit=${HOLDERS_LIMIT}`,
     signal,
   );
-  let yesSize = 0;
-  let noSize = 0;
-  let yesCount = 0;
-  let noCount = 0;
   /** @type {Array<{side:"yes"|"no", wallet:string, size:number}>} */
   const holders = [];
   for (const g of groups || []) {
@@ -176,6 +185,8 @@ async function computeStrength(conditionId, signal) {
       total_qualified_size: 0,
       stronger: "tie",
       strength_status: "empty",
+      yes_holders: [],
+      no_holders: [],
     };
   }
 
@@ -185,18 +196,23 @@ async function computeStrength(conditionId, signal) {
     pnls.set(w, await lifetimePnL(w, signal));
   }, signal);
 
+  /** @type {QualifiedHolder[]} */
+  const yesHolders = [];
+  /** @type {QualifiedHolder[]} */
+  const noHolders = [];
   for (const h of holders) {
     const pnl = pnls.get(h.wallet);
     if (pnl == null || !(pnl > MIN_PNL)) continue;
-    if (h.side === "yes") {
-      yesSize += h.size;
-      yesCount += 1;
-    } else {
-      noSize += h.size;
-      noCount += 1;
-    }
+    const row = { wallet: h.wallet, size: h.size, pnl };
+    if (h.side === "yes") yesHolders.push(row);
+    else noHolders.push(row);
   }
 
+  yesHolders.sort((a, b) => b.size - a.size);
+  noHolders.sort((a, b) => b.size - a.size);
+
+  const yesSize = yesHolders.reduce((s, h) => s + h.size, 0);
+  const noSize = noHolders.reduce((s, h) => s + h.size, 0);
   const total = yesSize + noSize;
   const yes = total > 0 ? yesSize / total : null;
   const no = total > 0 ? noSize / total : null;
@@ -209,11 +225,13 @@ async function computeStrength(conditionId, signal) {
     no_strength: no,
     yes_qualified_size: yesSize,
     no_qualified_size: noSize,
-    yes_qualified_count: yesCount,
-    no_qualified_count: noCount,
+    yes_qualified_count: yesHolders.length,
+    no_qualified_count: noHolders.length,
     total_qualified_size: total,
     stronger,
     strength_status: total > 0 ? "ready" : "empty",
+    yes_holders: yesHolders,
+    no_holders: noHolders,
   };
 }
 
@@ -230,10 +248,35 @@ function fmtShares(n) {
   return n.toFixed(n >= 10 ? 0 : 1);
 }
 
+function fmtPnl(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}k`;
+  return `${sign}$${Math.round(abs)}`;
+}
+
+function fmtWallet(w) {
+  if (!w || w.length < 12) return w || "—";
+  return `${w.slice(0, 6)}…${w.slice(-4)}`;
+}
+
 function fmtPrice(m) {
   const p = m.outcome_prices || [];
   if (p.length < 2) return "—";
   return `${Math.round(p[0] * 100)}¢ / ${Math.round(p[1] * 100)}¢`;
+}
+
+/** Donut: green = Yes share of total, red = No. */
+function shareDonut(yesSize, noSize) {
+  const total = yesSize + noSize;
+  if (!(total > 0)) {
+    return `<span class="donut donut-empty" title="n/a" aria-hidden="true"></span>`;
+  }
+  const yesPct = (yesSize / total) * 100;
+  const title = `Yes ${fmtShares(yesSize)} (${yesPct.toFixed(0)}%) · No ${fmtShares(noSize)} (${(100 - yesPct).toFixed(0)}%)`;
+  return `<span class="donut" title="${title}" style="--yes:${yesPct.toFixed(2)}" aria-label="${title}"></span>`;
 }
 
 function filteredRows() {
@@ -276,6 +319,46 @@ function setSortHeaders() {
   });
 }
 
+function holdersTable(sideLabel, holders) {
+  const rowsHtml = holders.length
+    ? holders.map((h) =>
+      `<tr>` +
+      `<td class="wallet"><a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer">${fmtWallet(h.wallet)}</a></td>` +
+      `<td class="num">${fmtShares(h.size)}</td>` +
+      `<td class="num">${fmtPnl(h.pnl)}</td>` +
+      `</tr>`
+    ).join("")
+    : `<tr><td colspan="3" class="na">No &gt;$100k holders</td></tr>`;
+
+  return (
+    `<div class="side-block side-${sideLabel.toLowerCase()}">` +
+    `<div class="side-label">${sideLabel}</div>` +
+    `<table class="holders">` +
+    `<thead><tr><th>Trader</th><th class="num">Shares</th><th class="num">Lifetime PnL</th></tr></thead>` +
+    `<tbody>${rowsHtml}</tbody>` +
+    `</table>` +
+    `</div>`
+  );
+}
+
+function detailRow(m, colSpan) {
+  const tr = document.createElement("tr");
+  tr.className = "detail-row";
+  tr.dataset.id = m.condition_id;
+  if (m.strength_status !== "ready") {
+    tr.innerHTML = `<td colspan="${colSpan}"><div class="detail">Holders not ready.</div></td>`;
+    return tr;
+  }
+  tr.innerHTML =
+    `<td colspan="${colSpan}">` +
+    `<div class="detail">` +
+    holdersTable("Yes", m.yes_holders || []) +
+    holdersTable("No", m.no_holders || []) +
+    `</div>` +
+    `</td>`;
+  return tr;
+}
+
 function render() {
   setSortHeaders();
   const list = filteredRows();
@@ -294,13 +377,21 @@ function render() {
   }
   $("empty").hidden = true;
   const frag = document.createDocumentFragment();
+  const colSpan = 7;
+
   for (const m of list) {
     const tr = document.createElement("tr");
+    tr.className = "market-row" + (expanded.has(m.condition_id) ? " open" : "");
+    tr.dataset.id = m.condition_id;
+    tr.tabIndex = 0;
+
     let sharesCell = `<span class="pending">…</span>`;
     let tradersCell = `<span class="pending">…</span>`;
+    let donut = `<span class="donut donut-empty" aria-hidden="true"></span>`;
     if (m.strength_status === "ready") {
       sharesCell = `${fmtShares(m.yes_qualified_size)} / ${fmtShares(m.no_qualified_size)}`;
       tradersCell = `${m.yes_qualified_count} / ${m.no_qualified_count}`;
+      donut = shareDonut(m.yes_qualified_size, m.no_qualified_size);
     } else if (m.strength_status === "empty") {
       sharesCell = `<span class="na">n/a</span>`;
       tradersCell = `<span class="na">n/a</span>`;
@@ -310,17 +401,29 @@ function render() {
     }
 
     tr.innerHTML =
+      `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
       `<td class="num">${fmtVol(m.volume_24hr)}</td>` +
       `<td class="market"><a href="${m.url}" target="_blank" rel="noopener noreferrer"></a><span class="evt"></span></td>` +
       `<td class="num hide-sm">${fmtPrice(m)}</td>` +
-      `<td class="num">${sharesCell}</td>` +
+      `<td class="num shares-cell"><span class="shares-text">${sharesCell}</span>${donut}</td>` +
       `<td class="num">${tradersCell}</td>` +
       `<td class="num hide-sm">${m.stronger === "tie" && m.strength_status !== "ready" ? "—" : m.stronger}</td>`;
     tr.querySelector("a").textContent = m.question;
     tr.querySelector(".evt").textContent = m.event_title || m.event_slug || "";
     frag.appendChild(tr);
+
+    if (expanded.has(m.condition_id)) {
+      frag.appendChild(detailRow(m, colSpan));
+    }
   }
   body.appendChild(frag);
+}
+
+function toggleExpand(id) {
+  if (!id) return;
+  if (expanded.has(id)) expanded.delete(id);
+  else expanded.add(id);
+  render();
 }
 
 async function fillStrength(signal) {
@@ -331,6 +434,8 @@ async function fillStrength(signal) {
     } catch (e) {
       if (e?.name === "AbortError") throw e;
       row.strength_status = "error";
+      row.yes_holders = [];
+      row.no_holders = [];
     }
     render();
   }, signal);
@@ -346,6 +451,7 @@ async function load() {
   $("load").disabled = true;
   $("load").textContent = "Loading…";
   rows = [];
+  expanded.clear();
   render();
 
   try {
@@ -359,7 +465,7 @@ async function load() {
     rows = markets;
     $("tagLabel").textContent = `${tagInfo.label} (${tagInfo.id})`;
     render();
-    $("load").textContent = "Strength…";
+    $("load").textContent = "Holders…";
     await fillStrength(signal);
   } catch (e) {
     if (e?.name !== "AbortError") {
@@ -385,6 +491,22 @@ function bindSort() {
     });
   });
 }
+
+$("tbody").addEventListener("click", (e) => {
+  const t = /** @type {HTMLElement} */ (e.target);
+  if (t.closest("a")) return;
+  const row = t.closest("tr.market-row");
+  if (!row) return;
+  toggleExpand(row.dataset.id);
+});
+
+$("tbody").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = /** @type {HTMLElement} */ (e.target).closest?.("tr.market-row");
+  if (!row) return;
+  e.preventDefault();
+  toggleExpand(row.dataset.id);
+});
 
 $("q").addEventListener("input", render);
 $("load").addEventListener("click", load);
