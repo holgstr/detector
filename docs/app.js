@@ -405,9 +405,50 @@ async function fillLastTrades(market, signal) {
   }, signal);
 }
 
+function favoredSharpCount(m) {
+  if (m.strength_status !== "ready") return 0;
+  if (m.stronger === "yes") return m.yes_qualified_count || 0;
+  if (m.stronger === "no") return m.no_qualified_count || 0;
+  // Tie: require sharps on either side meeting the bar via max
+  return Math.max(m.yes_qualified_count || 0, m.no_qualified_count || 0);
+}
+
+function tradeTimestampMs(t) {
+  if (!t || !t.timestamp) return 0;
+  return t.timestamp > 1e12 ? t.timestamp : t.timestamp * 1000;
+}
+
+function recentSharpCount(m, withinHours) {
+  const cutoff = Date.now() - withinHours * 3600 * 1000;
+  const all = [...(m.yes_holders || []), ...(m.no_holders || [])];
+  let n = 0;
+  for (const h of all) {
+    const t = h.last_trade;
+    if (!t || t.status !== "ready") continue;
+    if (tradeTimestampMs(t) >= cutoff) n += 1;
+  }
+  return n;
+}
+
+function passesSharpFilters(m) {
+  const minFavored = Math.max(0, Number($("minFavoredSharps").value) || 0);
+  const minRecent = Math.max(0, Number($("minRecentSharps").value) || 0);
+  const hours = Math.max(1, Number($("recentHours").value) || 24);
+
+  if (minFavored > 0) {
+    if (m.strength_status !== "ready") return false;
+    if (favoredSharpCount(m) < minFavored) return false;
+  }
+  if (minRecent > 0) {
+    if (m.strength_status !== "ready") return false;
+    if (recentSharpCount(m, hours) < minRecent) return false;
+  }
+  return true;
+}
+
 function filteredRows() {
   const needle = $("q").value.trim().toLowerCase();
-  let list = rows;
+  let list = rows.filter(passesSharpFilters);
   if (needle) {
     list = list.filter((m) => {
       const hay = [m.question, m.slug, m.event_title, m.event_slug].join(" ").toLowerCase();
@@ -574,6 +615,9 @@ async function fillStrength(signal) {
     try {
       const s = await computeStrength(row.condition_id, signal);
       Object.assign(row, s);
+      if (row.strength_status === "ready") {
+        await fillLastTrades(row, signal);
+      }
     } catch (e) {
       if (e?.name === "AbortError") throw e;
       row.strength_status = "error";
@@ -608,7 +652,7 @@ async function load() {
     rows = markets;
     $("tagLabel").textContent = `${tagInfo.label} (${tagInfo.id})`;
     render();
-    $("load").textContent = "Holders…";
+    $("load").textContent = "Sharps…";
     await fillStrength(signal);
   } catch (e) {
     if (e?.name !== "AbortError") {
@@ -652,6 +696,9 @@ $("tbody").addEventListener("keydown", (e) => {
 });
 
 $("q").addEventListener("input", render);
+$("minFavoredSharps").addEventListener("input", render);
+$("minRecentSharps").addEventListener("input", render);
+$("recentHours").addEventListener("input", render);
 $("load").addEventListener("click", load);
 $("tag").addEventListener("change", load);
 $("minVol").addEventListener("keydown", (e) => {
