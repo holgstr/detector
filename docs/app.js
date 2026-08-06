@@ -16,10 +16,21 @@ let strengthAbort = null;
 const expanded = new Set();
 
 /**
+ * @typedef {object} LastTrade
+ * @property {"BUY"|"SELL"|string} side
+ * @property {number} size
+ * @property {number} timestamp
+ * @property {string} outcome
+ * @property {"pending"|"ready"|"error"|"empty"} status
+ */
+
+/**
  * @typedef {object} QualifiedHolder
  * @property {string} wallet
+ * @property {string} name
  * @property {number} size
  * @property {number} pnl
+ * @property {LastTrade|null} last_trade
  */
 
 /**
@@ -164,14 +175,19 @@ async function computeStrength(conditionId, signal) {
     `${DATA}/holders?market=${encodeURIComponent(conditionId)}&limit=${HOLDERS_LIMIT}`,
     signal,
   );
-  /** @type {Array<{side:"yes"|"no", wallet:string, size:number}>} */
+  /** @type {Array<{side:"yes"|"no", wallet:string, name:string, size:number}>} */
   const holders = [];
   for (const g of groups || []) {
     for (const h of g.holders || []) {
       const wallet = String(h.proxyWallet || "").toLowerCase();
       if (!wallet) continue;
       const side = h.outcomeIndex === 1 ? "no" : "yes";
-      holders.push({ side, wallet, size: Number(h.amount) || 0 });
+      holders.push({
+        side,
+        wallet,
+        name: displayName(h),
+        size: Number(h.amount) || 0,
+      });
     }
   }
   if (!holders.length) {
@@ -203,7 +219,13 @@ async function computeStrength(conditionId, signal) {
   for (const h of holders) {
     const pnl = pnls.get(h.wallet);
     if (pnl == null || !(pnl > MIN_PNL)) continue;
-    const row = { wallet: h.wallet, size: h.size, pnl };
+    const row = {
+      wallet: h.wallet,
+      name: h.name,
+      size: h.size,
+      pnl,
+      last_trade: null,
+    };
     if (h.side === "yes") yesHolders.push(row);
     else noHolders.push(row);
   }
@@ -257,15 +279,54 @@ function fmtPnl(n) {
   return `${sign}$${Math.round(abs)}`;
 }
 
+function displayName(h) {
+  const name = String(h.name || "").trim();
+  const pseudo = String(h.pseudonym || "").trim();
+  if (h.displayUsernamePublic !== false && name) return name;
+  if (pseudo) return pseudo;
+  if (name) return name;
+  return "";
+}
+
 function fmtWallet(w) {
   if (!w || w.length < 12) return w || "—";
   return `${w.slice(0, 6)}…${w.slice(-4)}`;
+}
+
+function fmtTrader(h) {
+  return h.name || fmtWallet(h.wallet);
 }
 
 function fmtPrice(m) {
   const p = m.outcome_prices || [];
   if (p.length < 2) return "—";
   return `${Math.round(p[0] * 100)}¢ / ${Math.round(p[1] * 100)}¢`;
+}
+
+function fmtWhen(ts) {
+  if (!ts) return "—";
+  const ms = ts > 1e12 ? ts : ts * 1000;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "—";
+  const diff = Date.now() - d.getTime();
+  const sec = Math.round(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  if (day < 60) return `${day}d ago`;
+  return d.toLocaleDateString();
+}
+
+function fmtLastTrade(t) {
+  if (!t || t.status === "pending") return `<span class="pending">…</span>`;
+  if (t.status === "error") return `<span class="na">err</span>`;
+  if (t.status === "empty" || !t.side) return `<span class="na">n/a</span>`;
+  const side = String(t.side).toUpperCase();
+  const cls = side === "BUY" ? "trade-buy" : side === "SELL" ? "trade-sell" : "";
+  return `<span class="${cls}">${side}</span> ${fmtShares(t.size)} <span class="muted">${t.outcome || ""} · ${fmtWhen(t.timestamp)}</span>`;
 }
 
 /** Donut: green = Yes share of total, red = No. */
@@ -277,6 +338,43 @@ function shareDonut(yesSize, noSize) {
   const yesPct = (yesSize / total) * 100;
   const title = `Yes ${fmtShares(yesSize)} (${yesPct.toFixed(0)}%) · No ${fmtShares(noSize)} (${(100 - yesPct).toFixed(0)}%)`;
   return `<span class="donut" title="${title}" style="--yes-pct:${yesPct.toFixed(2)}" aria-label="${title}"></span>`;
+}
+
+async function fetchLastTrade(wallet, conditionId, signal) {
+  const q = new URLSearchParams({
+    user: wallet,
+    market: conditionId,
+    limit: "1",
+  });
+  const trades = await getJSON(`${DATA}/trades?${q}`, signal);
+  if (!Array.isArray(trades) || !trades.length) {
+    return { side: "", size: 0, timestamp: 0, outcome: "", status: "empty" };
+  }
+  const t = trades[0];
+  return {
+    side: String(t.side || ""),
+    size: Number(t.size) || 0,
+    timestamp: Number(t.timestamp) || 0,
+    outcome: String(t.outcome || ""),
+    status: "ready",
+  };
+}
+
+async function fillLastTrades(market, signal) {
+  const all = [...(market.yes_holders || []), ...(market.no_holders || [])];
+  const need = all.filter((h) => !h.last_trade || h.last_trade.status === "pending");
+  if (!need.length) return;
+  for (const h of need) {
+    h.last_trade = { side: "", size: 0, timestamp: 0, outcome: "", status: "pending" };
+  }
+  await mapPool(need, PNL_CONCURRENCY, async (h) => {
+    try {
+      h.last_trade = await fetchLastTrade(h.wallet, market.condition_id, signal);
+    } catch (e) {
+      if (e?.name === "AbortError") throw e;
+      h.last_trade = { side: "", size: 0, timestamp: 0, outcome: "", status: "error" };
+    }
+  }, signal);
 }
 
 function filteredRows() {
@@ -323,18 +421,19 @@ function holdersTable(sideLabel, holders) {
   const rowsHtml = holders.length
     ? holders.map((h) =>
       `<tr>` +
-      `<td class="wallet"><a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer">${fmtWallet(h.wallet)}</a></td>` +
+      `<td class="trader"><a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer" title="${h.wallet}">${fmtTrader(h)}</a></td>` +
       `<td class="num">${fmtShares(h.size)}</td>` +
       `<td class="num">${fmtPnl(h.pnl)}</td>` +
+      `<td class="last-trade">${fmtLastTrade(h.last_trade)}</td>` +
       `</tr>`
     ).join("")
-    : `<tr><td colspan="3" class="na">No &gt;$100k holders</td></tr>`;
+    : `<tr><td colspan="4" class="na">No &gt;$100k holders</td></tr>`;
 
   return (
     `<div class="side-block side-${sideLabel.toLowerCase()}">` +
     `<div class="side-label">${sideLabel}</div>` +
     `<table class="holders">` +
-    `<thead><tr><th>Trader</th><th class="num">Shares</th><th class="num">Lifetime PnL</th></tr></thead>` +
+    `<thead><tr><th>Trader</th><th class="num">Shares</th><th class="num">Lifetime PnL</th><th>Last trade</th></tr></thead>` +
     `<tbody>${rowsHtml}</tbody>` +
     `</table>` +
     `</div>`
@@ -405,7 +504,7 @@ function render() {
       `<td class="num">${fmtVol(m.volume_24hr)}</td>` +
       `<td class="market"><a href="${m.url}" target="_blank" rel="noopener noreferrer"></a><span class="evt"></span></td>` +
       `<td class="num hide-sm">${fmtPrice(m)}</td>` +
-      `<td class="num shares-cell"><span class="shares-text">${sharesCell}</span>${donut}</td>` +
+      `<td class="num"><span class="shares-wrap"><span class="shares-text">${sharesCell}</span>${donut}</span></td>` +
       `<td class="num">${tradersCell}</td>` +
       `<td class="num hide-sm">${m.stronger === "tie" && m.strength_status !== "ready" ? "—" : m.stronger}</td>`;
     tr.querySelector("a").textContent = m.question;
@@ -419,11 +518,24 @@ function render() {
   body.appendChild(frag);
 }
 
-function toggleExpand(id) {
+async function toggleExpand(id) {
   if (!id) return;
-  if (expanded.has(id)) expanded.delete(id);
-  else expanded.add(id);
+  if (expanded.has(id)) {
+    expanded.delete(id);
+    render();
+    return;
+  }
+  expanded.add(id);
   render();
+  const market = rows.find((r) => r.condition_id === id);
+  if (!market || market.strength_status !== "ready") return;
+  const signal = strengthAbort?.signal;
+  try {
+    await fillLastTrades(market, signal);
+    if (expanded.has(id)) render();
+  } catch (e) {
+    if (e?.name !== "AbortError" && expanded.has(id)) render();
+  }
 }
 
 async function fillStrength(signal) {

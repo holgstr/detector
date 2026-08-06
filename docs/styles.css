@@ -160,6 +160,10 @@ tr.market-row { cursor: pointer; }
 tr.market-row:hover td { background: var(--hover); }
 tr.market-row.open td { background: #f5f5f5; }
 
+tr.market-row td {
+  vertical-align: middle;
+}
+
 th.expand-h, td.expand {
   width: 1.25rem;
   padding-right: 0.15rem;
@@ -170,15 +174,18 @@ th.expand-h, td.expand {
   content: "▸";
   display: inline-block;
   font-size: 0.7rem;
+  line-height: 1;
   transition: transform 0.12s ease;
 }
 tr.market-row.open .chev::before { transform: rotate(90deg); }
 
-.shares-cell {
-  display: flex;
+.shares-wrap {
+  display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 0.45rem;
+  vertical-align: middle;
+  line-height: 1;
 }
 .shares-text { white-space: nowrap; }
 
@@ -188,6 +195,8 @@ tr.market-row.open .chev::before { transform: rotate(90deg); }
   height: 0.95rem;
   border-radius: 50%;
   flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: middle;
   background: conic-gradient(
     var(--yes) 0 calc(var(--yes-pct) * 1%),
     var(--no) calc(var(--yes-pct) * 1%) 100%
@@ -238,13 +247,20 @@ table.holders th {
   position: static;
   background: #fafafa;
 }
-table.holders .wallet a {
+table.holders .trader a {
   color: var(--fg);
   text-decoration: none;
-  font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.78rem;
 }
-table.holders .wallet a:hover { text-decoration: underline; }
+table.holders .trader a:hover { text-decoration: underline; }
+table.holders .last-trade {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.trade-buy { color: var(--yes); font-weight: 500; }
+.trade-sell { color: var(--no); font-weight: 500; }
+.muted { color: var(--muted); }
 
 .pending { color: var(--muted); }
 .na { color: #aaa; }
