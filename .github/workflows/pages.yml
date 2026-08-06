@@ -12,9 +12,8 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  deployments: write
 
-# Do NOT cancel in-progress deploys — that yields "Deployment cancelled"
-# and can poison the commit SHA so reruns of the same SHA also fail.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -38,5 +37,32 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Cancel/delete OTHER commit SHAs only — never the current one.
+      # Ghost "in progress" deployments from older SHAs block create.
+      - name: Clear stale Pages deployments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          for sha in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].sha' | sort -u); do
+            if [ "$sha" = "$KEEP_SHA" ]; then
+              echo "keep current $sha"
+              continue
+            fi
+            echo "cancel stale $sha"
+            gh api -X POST "repos/$REPO/pages/deployments/$sha/cancel" >/dev/null 2>&1 || true
+          done
+          for row in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[] | "\(.id):\(.sha)"'); do
+            id="${row%%:*}"
+            sha="${row#*:}"
+            if [ "$sha" = "$KEEP_SHA" ]; then
+              continue
+            fi
+            echo "delete stale deployment $id ($sha)"
+            gh api -X POST "repos/$REPO/deployments/$id/statuses" -f state=inactive >/dev/null 2>&1 || true
+            gh api -X DELETE "repos/$REPO/deployments/$id" >/dev/null 2>&1 || true
+          done
       - id: deployment
         uses: actions/deploy-pages@v4
