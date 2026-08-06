@@ -1,7 +1,5 @@
 name: Unwedge Pages
 
-# Manual escape hatch if deploy-pages gets stuck in deployment_queued again.
-# Prefer the prepare job in pages.yml for routine deploys.
 on:
   workflow_dispatch:
 
@@ -16,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Cancel stuck deployments and force Actions source
+      - name: Clear stuck deployments and request build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -38,11 +36,6 @@ jobs:
             gh api -X DELETE "repos/$REPO/deployments/$id" >/dev/null 2>&1 || true
           done
 
-          if ! gh api -X PUT "repos/$REPO/pages" -f build_type=workflow; then
-            gh api -X DELETE "repos/$REPO/pages" >/dev/null 2>&1 || true
-            sleep 8
-            gh api -X POST "repos/$REPO/pages" -f build_type=workflow
-          fi
-
-          gh api "repos/$REPO/pages" --jq '{status,build_type,html_url,source}'
-          echo "Re-run the Deploy site workflow (or push to docs/) to publish."
+          gh api -X PUT "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1 || true
+          gh api -X POST "repos/$REPO/pages/builds" >/dev/null 2>&1 || true
+          gh api "repos/$REPO/pages" --jq '{status,build_type,html_url}'
