@@ -314,9 +314,14 @@
 
   function renderActivity() {
     const list = filteredActRows();
+    const wallets = TRACKED.map((t) => {
+      const p = profiles.get(t.wallet.toLowerCase());
+      return shortName(p?.name || t.name || fmtWallet(t.wallet));
+    }).join(", ");
     $("actMeta").innerHTML =
       `<span>events <b>${list.length}</b></span>` +
-      `<span>wallets <b>${TRACKED.length}</b></span>`;
+      `<span>wallets <b>${TRACKED.length}</b></span>` +
+      `<span>${wallets}</span>`;
 
     const body = $("actBody");
     body.innerHTML = "";
