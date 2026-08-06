@@ -276,7 +276,7 @@ function shareDonut(yesSize, noSize) {
   }
   const yesPct = (yesSize / total) * 100;
   const title = `Yes ${fmtShares(yesSize)} (${yesPct.toFixed(0)}%) · No ${fmtShares(noSize)} (${(100 - yesPct).toFixed(0)}%)`;
-  return `<span class="donut" title="${title}" style="--yes:${yesPct.toFixed(2)}" aria-label="${title}"></span>`;
+  return `<span class="donut" title="${title}" style="--yes-pct:${yesPct.toFixed(2)}" aria-label="${title}"></span>`;
 }
 
 function filteredRows() {
