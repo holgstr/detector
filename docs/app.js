@@ -54,6 +54,8 @@ const expanded = new Set();
  * @property {number} no_qualified_count
  * @property {number} total_qualified_size
  * @property {number} net_shares_abs
+ * @property {number} net_traders_abs
+ * @property {number|null} net_strength_abs
  * @property {string} stronger
  * @property {QualifiedHolder[]} yes_holders
  * @property {QualifiedHolder[]} no_holders
@@ -133,6 +135,8 @@ async function listMarkets({ tagSlug, minVolume24, signal }) {
         no_qualified_count: 0,
         total_qualified_size: 0,
         net_shares_abs: 0,
+        net_traders_abs: 0,
+        net_strength_abs: null,
         stronger: "tie",
         yes_holders: [],
         no_holders: [],
@@ -203,6 +207,8 @@ async function computeStrength(conditionId, signal) {
       no_qualified_count: 0,
       total_qualified_size: 0,
       net_shares_abs: 0,
+      net_traders_abs: 0,
+      net_strength_abs: null,
       stronger: "tie",
       strength_status: "empty",
       yes_holders: [],
@@ -270,6 +276,8 @@ async function computeStrength(conditionId, signal) {
     no_qualified_count: noHolders.length,
     total_qualified_size: total,
     net_shares_abs: Math.abs(yesSize - noSize),
+    net_traders_abs: Math.abs(yesHolders.length - noHolders.length),
+    net_strength_abs: yes == null || no == null ? null : Math.abs(yes - no),
     stronger,
     strength_status: total > 0 ? "ready" : "empty",
     yes_holders: yesHolders,
@@ -314,7 +322,9 @@ function fmtWallet(w) {
 }
 
 function fmtTrader(h) {
-  return h.name || fmtWallet(h.wallet);
+  const raw = h.name || fmtWallet(h.wallet);
+  if (raw.length <= 25) return raw;
+  return `${raw.slice(0, 24)}…`;
 }
 
 function fmtPrice(m) {
@@ -323,21 +333,19 @@ function fmtPrice(m) {
   return `${Math.round(p[0] * 100)}¢ / ${Math.round(p[1] * 100)}¢`;
 }
 
+function fmtPct(x) {
+  if (x == null || Number.isNaN(x)) return "—";
+  return (x * 100).toFixed(1) + "%";
+}
+
 function fmtWhen(ts) {
   if (!ts) return "—";
   const ms = ts > 1e12 ? ts : ts * 1000;
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return "—";
-  const diff = Date.now() - d.getTime();
-  const sec = Math.round(diff / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 48) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  if (day < 60) return `${day}d ago`;
-  return d.toLocaleDateString();
+  const hr = Math.max(0, Math.round((Date.now() - d.getTime()) / 3600000));
+  if (hr < 48) return `${hr}h`;
+  return `${Math.round(hr / 24)}d`;
 }
 
 function fmtTradePrice(p) {
@@ -466,7 +474,7 @@ function filteredRows() {
       bv = strongerRank[b.stronger] ?? 0;
       if (a.strength_status !== "ready") av = null;
       if (b.strength_status !== "ready") bv = null;
-    } else if (key === "net_shares_abs") {
+    } else if (key === "net_shares_abs" || key === "net_traders_abs" || key === "net_strength_abs") {
       if (a.strength_status !== "ready") av = null;
       if (b.strength_status !== "ready") bv = null;
     }
@@ -548,7 +556,7 @@ function render() {
   }
   $("empty").hidden = true;
   const frag = document.createDocumentFragment();
-  const colSpan = 7;
+  const colSpan = 8;
 
   for (const m of list) {
     const tr = document.createElement("tr");
@@ -557,17 +565,21 @@ function render() {
     tr.tabIndex = 0;
 
     let sharesCell = `<span class="pending">…</span>`;
+    let strengthCell = `<span class="pending">…</span>`;
     let tradersCell = `<span class="pending">…</span>`;
     let donut = `<span class="donut donut-empty" aria-hidden="true"></span>`;
     if (m.strength_status === "ready") {
       sharesCell = `${fmtShares(m.yes_qualified_size)} / ${fmtShares(m.no_qualified_size)}`;
+      strengthCell = `${fmtPct(m.yes_strength)} / ${fmtPct(m.no_strength)}`;
       tradersCell = `${m.yes_qualified_count} / ${m.no_qualified_count}`;
       donut = shareDonut(m.yes_qualified_size, m.no_qualified_size);
     } else if (m.strength_status === "empty") {
       sharesCell = `<span class="na">n/a</span>`;
+      strengthCell = `<span class="na">n/a</span>`;
       tradersCell = `<span class="na">n/a</span>`;
     } else if (m.strength_status === "error") {
       sharesCell = `<span class="na">err</span>`;
+      strengthCell = `<span class="na">err</span>`;
       tradersCell = `<span class="na">err</span>`;
     }
 
@@ -577,6 +589,7 @@ function render() {
       `<td class="market"><a href="${m.url}" target="_blank" rel="noopener noreferrer"></a><span class="evt"></span></td>` +
       `<td class="num hide-sm">${fmtPrice(m)}</td>` +
       `<td class="num"><span class="shares-wrap"><span class="shares-text">${sharesCell}</span>${donut}</span></td>` +
+      `<td class="num">${strengthCell}</td>` +
       `<td class="num">${tradersCell}</td>` +
       `<td class="num hide-sm">${m.stronger === "tie" && m.strength_status !== "ready" ? "—" : m.stronger}</td>`;
     tr.querySelector("a").textContent = m.question;
