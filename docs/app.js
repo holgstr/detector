@@ -27,9 +27,10 @@ let strengthAbort = null;
  * @property {"pending"|"ready"|"error"|"empty"} strength_status
  * @property {number|null} yes_strength
  * @property {number|null} no_strength
- * @property {number|null} strength_edge
  * @property {number} yes_qualified_size
  * @property {number} no_qualified_size
+ * @property {number} yes_qualified_count
+ * @property {number} no_qualified_count
  * @property {number} total_qualified_size
  * @property {string} stronger
  */
@@ -102,9 +103,10 @@ async function listMarkets({ tagSlug, minVolume24, signal }) {
         strength_status: "pending",
         yes_strength: null,
         no_strength: null,
-        strength_edge: null,
         yes_qualified_size: 0,
         no_qualified_size: 0,
+        yes_qualified_count: 0,
+        no_qualified_count: 0,
         total_qualified_size: 0,
         stronger: "tie",
       });
@@ -151,6 +153,8 @@ async function computeStrength(conditionId, signal) {
   );
   let yesSize = 0;
   let noSize = 0;
+  let yesCount = 0;
+  let noCount = 0;
   /** @type {Array<{side:"yes"|"no", wallet:string, size:number}>} */
   const holders = [];
   for (const g of groups || []) {
@@ -165,9 +169,10 @@ async function computeStrength(conditionId, signal) {
     return {
       yes_strength: null,
       no_strength: null,
-      strength_edge: null,
       yes_qualified_size: 0,
       no_qualified_size: 0,
+      yes_qualified_count: 0,
+      no_qualified_count: 0,
       total_qualified_size: 0,
       stronger: "tie",
       strength_status: "empty",
@@ -183,8 +188,13 @@ async function computeStrength(conditionId, signal) {
   for (const h of holders) {
     const pnl = pnls.get(h.wallet);
     if (pnl == null || !(pnl > MIN_PNL)) continue;
-    if (h.side === "yes") yesSize += h.size;
-    else noSize += h.size;
+    if (h.side === "yes") {
+      yesSize += h.size;
+      yesCount += 1;
+    } else {
+      noSize += h.size;
+      noCount += 1;
+    }
   }
 
   const total = yesSize + noSize;
@@ -197,9 +207,10 @@ async function computeStrength(conditionId, signal) {
   return {
     yes_strength: yes,
     no_strength: no,
-    strength_edge: yes == null ? null : Math.abs(yes - 0.5),
     yes_qualified_size: yesSize,
     no_qualified_size: noSize,
+    yes_qualified_count: yesCount,
+    no_qualified_count: noCount,
     total_qualified_size: total,
     stronger,
     strength_status: total > 0 ? "ready" : "empty",
@@ -212,9 +223,11 @@ function fmtVol(n) {
   return String(Math.round(n || 0));
 }
 
-function fmtPct(x) {
-  if (x == null || Number.isNaN(x)) return "—";
-  return (x * 100).toFixed(1) + "%";
+function fmtShares(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return n.toFixed(n >= 10 ? 0 : 1);
 }
 
 function fmtPrice(m) {
@@ -270,7 +283,7 @@ function render() {
   $("meta").innerHTML =
     `<span>loaded <b>${rows.length}</b></span>` +
     `<span>showing <b>${list.length}</b></span>` +
-    `<span>strength <b>${ready}/${rows.length}</b></span>` +
+    `<span>holders <b>${ready}/${rows.length}</b></span>` +
     `<span>sort <b>${sortKey} ${sortDir}</b></span>`;
 
   const body = $("tbody");
@@ -283,22 +296,26 @@ function render() {
   const frag = document.createDocumentFragment();
   for (const m of list) {
     const tr = document.createElement("tr");
-    let strengthCell = `<span class="pending">…</span>`;
+    let sharesCell = `<span class="pending">…</span>`;
+    let tradersCell = `<span class="pending">…</span>`;
     if (m.strength_status === "ready") {
-      strengthCell = `${fmtPct(m.yes_strength)} / ${fmtPct(m.no_strength)}`;
+      sharesCell = `${fmtShares(m.yes_qualified_size)} / ${fmtShares(m.no_qualified_size)}`;
+      tradersCell = `${m.yes_qualified_count} / ${m.no_qualified_count}`;
     } else if (m.strength_status === "empty") {
-      strengthCell = `<span class="na">n/a</span>`;
+      sharesCell = `<span class="na">n/a</span>`;
+      tradersCell = `<span class="na">n/a</span>`;
     } else if (m.strength_status === "error") {
-      strengthCell = `<span class="na">err</span>`;
+      sharesCell = `<span class="na">err</span>`;
+      tradersCell = `<span class="na">err</span>`;
     }
 
     tr.innerHTML =
       `<td class="num">${fmtVol(m.volume_24hr)}</td>` +
       `<td class="market"><a href="${m.url}" target="_blank" rel="noopener noreferrer"></a><span class="evt"></span></td>` +
       `<td class="num hide-sm">${fmtPrice(m)}</td>` +
-      `<td class="num">${strengthCell}</td>` +
-      `<td class="num hide-sm">${m.stronger === "tie" && m.strength_status !== "ready" ? "—" : m.stronger}</td>` +
-      `<td class="num hide-sm">${m.strength_edge == null ? "—" : fmtPct(m.strength_edge)}</td>`;
+      `<td class="num">${sharesCell}</td>` +
+      `<td class="num">${tradersCell}</td>` +
+      `<td class="num hide-sm">${m.stronger === "tie" && m.strength_status !== "ready" ? "—" : m.stronger}</td>`;
     tr.querySelector("a").textContent = m.question;
     tr.querySelector(".evt").textContent = m.event_title || m.event_slug || "";
     frag.appendChild(tr);
