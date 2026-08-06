@@ -12,7 +12,7 @@
 <body>
   <div class="wrap">
     <h1>Markets</h1>
-    <p class="sub">Active Yes/No markets by tag and 24h volume. Shares and trader counts are from top holders with lifetime PnL &gt; $100k.</p>
+    <p class="sub">Active Yes/No markets by tag and 24h volume. Sharps = top holders with lifetime PnL &gt; $100k (net shares). Filters apply after load.</p>
 
     <div class="bar">
       <label class="field search">Search
@@ -29,6 +29,15 @@
       </label>
       <label class="field">Min 24h vol
         <input id="minVol" type="number" min="0" step="1000" value="10000" />
+      </label>
+      <label class="field" title="Minimum sharps on the net-favored side (Yes or No)">Min sharps (side)
+        <input id="minFavoredSharps" type="number" min="0" step="1" value="0" />
+      </label>
+      <label class="field" title="At least this many sharps traded this market in the last Y hours">Min recent sharps
+        <input id="minRecentSharps" type="number" min="0" step="1" value="0" />
+      </label>
+      <label class="field" title="Lookback window for recent sharp trades">Within hours
+        <input id="recentHours" type="number" min="1" step="1" value="24" />
       </label>
       <button id="load" type="button">Load</button>
     </div>
