@@ -1,5 +1,7 @@
 name: Unwedge Pages
 
+# Manual only — never run this in the same workflow as deploy-pages.
+# Cancelling by commit SHA poisons that SHA; push a new commit after unwedge.
 on:
   workflow_dispatch:
 
@@ -14,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Clear stuck deployments and request build
+      - name: Clear stuck deployments
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -36,6 +38,6 @@ jobs:
             gh api -X DELETE "repos/$REPO/deployments/$id" >/dev/null 2>&1 || true
           done
 
-          gh api -X PUT "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1 || true
-          gh api -X POST "repos/$REPO/pages/builds" >/dev/null 2>&1 || true
-          gh api "repos/$REPO/pages" --jq '{status,build_type,html_url}'
+          echo "Cleared. Push a NEW commit to main (or merge a PR) so deploy uses a fresh SHA."
+          echo "Do not re-run an old workflow for a cancelled SHA — it will fail again."
+          gh api "repos/$REPO/pages" --jq '{status,build_type,html_url}' || true

@@ -12,72 +12,15 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  deployments: write
-  actions: write
 
+# Do NOT cancel in-progress deploys — that yields "Deployment cancelled"
+# and can poison the commit SHA so reruns of the same SHA also fail.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  # Ghost deployment_queued locks are what made publishes hang for ~10m.
-  # Clear them first; switching build_type requires admin and often 403s.
-  prepare:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      build_type: ${{ steps.meta.outputs.build_type }}
-    steps:
-      - name: Clear stuck Pages deployments
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          REPO="${{ github.repository }}"
-
-          echo "::group::Cancel pages-build-deployment runs"
-          for id in $(gh run list --repo "$REPO" --workflow=pages-build-deployment --status in_progress --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
-            echo "cancel run $id"
-            gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
-          done
-          for id in $(gh run list --repo "$REPO" --workflow=pages-build-deployment --status queued --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
-            echo "cancel queued run $id"
-            gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
-          done
-          echo "::endgroup::"
-
-          echo "::group::Cancel + delete github-pages deployments"
-          for sha in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].sha' 2>/dev/null || true); do
-            echo "cancel $sha"
-            gh api -X POST "repos/$REPO/pages/deployments/$sha/cancel" >/dev/null 2>&1 || true
-          done
-          for id in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].id' 2>/dev/null || true); do
-            echo "delete $id"
-            gh api -X POST "repos/$REPO/deployments/$id/statuses" -f state=inactive >/dev/null 2>&1 || true
-            gh api -X DELETE "repos/$REPO/deployments/$id" >/dev/null 2>&1 || true
-          done
-          echo "::endgroup::"
-
-          echo "::group::Best-effort switch to Actions source"
-          # Needs admin; ignore failures — legacy branch publish still works once the queue is clear.
-          gh api -X PUT "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1 \
-            && echo "switched to workflow" \
-            || echo "could not switch (need admin in Settings → Pages → Source: GitHub Actions)"
-          echo "::endgroup::"
-
-      - id: meta
-        name: Read Pages build_type
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          bt=$(gh api "repos/${{ github.repository }}/pages" --jq '.build_type' 2>/dev/null || echo legacy)
-          echo "build_type=$bt" >> "$GITHUB_OUTPUT"
-          echo "Pages build_type=$bt"
-
-  # Actions-source path (preferred when Settings → Pages → GitHub Actions).
   build:
-    needs: prepare
-    if: needs.prepare.outputs.build_type == 'workflow'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -88,52 +31,12 @@ jobs:
           path: docs
 
   deploy:
-    needs: [prepare, build]
-    if: needs.prepare.outputs.build_type == 'workflow'
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-        with:
-          timeout: 90000
-
-  # Legacy branch path (current repo setting: main /docs).
-  # After clearing the queue, request a fresh Pages build and wait briefly.
-  legacy_publish:
-    needs: prepare
-    if: needs.prepare.outputs.build_type != 'workflow'
-    runs-on: ubuntu-latest
-    timeout-minutes: 4
-    steps:
-      - name: Request Pages build and wait for site
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          REPO="${{ github.repository }}"
-          URL=$(gh api "repos/$REPO/pages" --jq '.html_url')
-          echo "Requesting build for $URL"
-          gh api -X POST "repos/$REPO/pages/builds" || true
-
-          # The push that triggered us also queues pages-build-deployment.
-          # Poll for HTTP 200 up to ~3 minutes.
-          for i in $(seq 1 36); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo 000)
-            echo "try $i: HTTP $code"
-            if [ "$code" = "200" ]; then
-              echo "Site is live: $URL"
-              exit 0
-            fi
-            status=$(gh api "repos/$REPO/pages" --jq '.status' 2>/dev/null || echo unknown)
-            echo "pages status=$status"
-            sleep 5
-          done
-
-          echo "::error::Site still not reachable at $URL after waiting. Check Actions → pages-build-deployment."
-          gh run list --repo "$REPO" --workflow=pages-build-deployment --limit 3 || true
-          gh api "repos/$REPO/pages/builds/latest" || true
-          exit 1
