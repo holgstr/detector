@@ -1,13 +1,12 @@
 name: Unwedge Pages
 
+# Manual escape hatch if deploy-pages gets stuck in deployment_queued again.
+# Prefer the prepare job in pages.yml for routine deploys.
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/unwedge-pages.yml"
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   deployments: write
   actions: write
@@ -15,47 +14,35 @@ permissions:
 jobs:
   unwedge:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
-      - name: Recreate Pages site (legacy main /docs)
+      - name: Cancel stuck deployments and force Actions source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
 
-          echo "::group::Cancel + delete any deployments"
-          for sha in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=30" --jq '.[].sha' 2>/dev/null || true); do
+          for id in $(gh run list --repo "$REPO" --workflow=pages-build-deployment --status in_progress --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
+            gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
+          done
+          for id in $(gh run list --repo "$REPO" --workflow=pages-build-deployment --status queued --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
+            gh run cancel "$id" --repo "$REPO" >/dev/null 2>&1 || true
+          done
+
+          for sha in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].sha' 2>/dev/null || true); do
             gh api -X POST "repos/$REPO/pages/deployments/$sha/cancel" >/dev/null 2>&1 || true
           done
-          for id in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=30" --jq '.[].id' 2>/dev/null || true); do
+          for id in $(gh api "repos/$REPO/deployments?environment=github-pages&per_page=50" --jq '.[].id' 2>/dev/null || true); do
             gh api -X POST "repos/$REPO/deployments/$id/statuses" -f state=inactive >/dev/null 2>&1 || true
             gh api -X DELETE "repos/$REPO/deployments/$id" >/dev/null 2>&1 || true
           done
-          echo "::endgroup::"
 
-          echo "::group::Delete Pages site"
-          gh api -X DELETE "repos/$REPO/pages" -i | head -1 || true
-          # Give GitHub a moment to drop the site
-          sleep 5
-          echo "::endgroup::"
+          if ! gh api -X PUT "repos/$REPO/pages" -f build_type=workflow; then
+            gh api -X DELETE "repos/$REPO/pages" >/dev/null 2>&1 || true
+            sleep 8
+            gh api -X POST "repos/$REPO/pages" -f build_type=workflow
+          fi
 
-          echo "::group::Create Pages site (legacy, main, /docs)"
-          # Retry create a few times — delete can be eventually consistent
-          for attempt in 1 2 3 4 5; do
-            if gh api -X POST "repos/$REPO/pages" \
-              -f build_type=legacy \
-              -f 'source[branch]=main' \
-              -f 'source[path]=/docs'; then
-              echo "created on attempt $attempt"
-              break
-            fi
-            echo "create attempt $attempt failed; sleeping"
-            sleep 5
-          done
-          echo "::endgroup::"
-
-          echo "::group::Final status"
-          sleep 3
-          gh api "repos/$REPO/pages" || true
-          gh api "repos/$REPO/pages/builds/latest" || true
-          echo "::endgroup::"
+          gh api "repos/$REPO/pages" --jq '{status,build_type,html_url,source}'
+          echo "Re-run the Deploy site workflow (or push to docs/) to publish."
