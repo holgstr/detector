@@ -728,8 +728,5 @@
     loadActivity();
   });
   $("actQ").addEventListener("input", renderActivity);
-  $("actType").addEventListener("change", () => {
-    actLoaded = false;
-    loadActivity();
-  });
+  $("actMinUsdc").addEventListener("input", renderActivity);
 })();

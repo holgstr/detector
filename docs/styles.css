@@ -68,6 +68,10 @@ h1 {
 
 .tab-panel[hidden] { display: none !important; }
 
+.tab-panel > .bar {
+  margin-top: 0.15rem;
+}
+
 .sub {
   margin: 0 0 1rem;
   color: var(--muted);
