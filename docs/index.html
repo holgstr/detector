@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>detector</title>
+  <title>Detector</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -12,7 +12,7 @@
 <body>
   <div class="wrap">
     <header class="top">
-      <h1>detector</h1>
+      <h1>Detector</h1>
       <nav class="tabs" role="tablist" aria-label="Main">
         <button type="button" class="tab active" role="tab" aria-selected="true" data-tab="markets">Markets</button>
         <button type="button" class="tab" role="tab" aria-selected="false" data-tab="portfolio">Portfolio</button>
@@ -21,8 +21,6 @@
     </header>
 
     <section id="tab-markets" class="tab-panel active" role="tabpanel">
-      <p class="sub">Active Yes/No markets by tag and 24h volume. Sharps = top holders with lifetime PnL &gt; $100k (net shares). Filters apply after load.</p>
-
       <div class="bar">
         <label class="field search">Search
           <input id="q" type="search" placeholder="Filter loaded markets" autocomplete="off" />
@@ -77,7 +75,6 @@
     </section>
 
     <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
-      <p class="sub">Open positions aggregated across tracked sharps — same fields as Polymarket profile portfolios, merged by market/outcome.</p>
       <div class="bar">
         <label class="field search">Search
           <input id="portQ" type="search" placeholder="Filter positions" autocomplete="off" />
@@ -107,22 +104,12 @@
     </section>
 
     <section id="tab-activity" class="tab-panel" role="tabpanel" hidden>
-      <p class="sub">Recent activity merged from tracked sharps — same trade feed as Polymarket profiles, newest first.</p>
       <div class="bar">
         <label class="field search">Search
           <input id="actQ" type="search" placeholder="Filter activity" autocomplete="off" />
         </label>
-        <label class="field">Type
-          <select id="actType">
-            <option value="TRADE" selected>TRADE</option>
-            <option value="">All</option>
-            <option value="REDEEM">REDEEM</option>
-            <option value="MERGE">MERGE</option>
-            <option value="SPLIT">SPLIT</option>
-          </select>
-        </label>
-        <label class="field">Per wallet
-          <input id="actLimit" type="number" min="20" max="500" step="20" value="100" />
+        <label class="field" title="Hide trades with USDC value under this">Min size $
+          <input id="actMinUsdc" type="number" min="0" step="1" value="100" />
         </label>
         <button id="actLoad" type="button">Refresh</button>
       </div>
@@ -136,8 +123,8 @@
             <th>Side</th>
             <th class="num">Size</th>
             <th class="num hide-sm">Price</th>
-            <th class="num hide-sm">USDC</th>
             <th>Market</th>
+            <th class="num">USDC</th>
           </tr>
         </thead>
         <tbody id="actBody"></tbody>

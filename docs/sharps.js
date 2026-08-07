@@ -578,7 +578,11 @@
 
   function filteredActRows() {
     const needle = $("actQ").value.trim().toLowerCase();
+    const minUsdc = Math.max(0, Number($("actMinUsdc").value) || 0);
     let list = aggregateActRows(actRows);
+    if (minUsdc > 0) {
+      list = list.filter((a) => (Number(a.usdcSize) || 0) >= minUsdc);
+    }
     if (needle) {
       list = list.filter((a) => {
         const hay = [a.title, a.outcome, a.name, a.side, a.type, a.slug].join(" ").toLowerCase();
@@ -614,8 +618,8 @@
         `<td class="${sideCls}">${side || "—"}</td>` +
         `<td class="num">${fmtShares(a.size)}</td>` +
         `<td class="num hide-sm">${a.price != null ? fmtCts(a.price) : "—"}</td>` +
-        `<td class="num hide-sm">${a.usdcSize != null ? fmtUsd(a.usdcSize) : "—"}</td>` +
-        `<td class="market">${marketCellHtml(a, "act-mkt")}</td>`;
+        `<td class="market">${marketCellHtml(a, "act-mkt")}</td>` +
+        `<td class="num">${a.usdcSize != null ? fmtUsd(a.usdcSize) : "—"}</td>`;
       tr.querySelector("a.mkt-title").textContent = a.title || a.slug || "—";
       frag.appendChild(tr);
     }
@@ -632,9 +636,8 @@
         if (profiles.has(t.wallet.toLowerCase())) return Promise.resolve();
         return loadProfile(t.wallet);
       }));
-      const limit = Math.min(500, Math.max(20, Number($("actLimit").value) || 100));
-      const type = $("actType").value;
-      const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, type)));
+      const limit = 200;
+      const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, "TRADE")));
       actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       await fillMissingIcons(actRows);
       actLoaded = true;
