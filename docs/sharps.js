@@ -99,6 +99,35 @@
     return `https://polymarket.com/profile/${p.proxyWallet || ""}`;
   }
 
+  function marketIcon(url) {
+    if (!url) return '<span class="mkt-icon mkt-icon-empty" aria-hidden="true"></span>';
+    const safe = String(url).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    return `<img class="mkt-icon" src="${safe}" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`;
+  }
+
+  function outcomeLabel(outcome) {
+    const o = String(outcome || "").trim();
+    const low = o.toLowerCase();
+    if (low === "yes") return '<span class="mkt-out yes">Yes</span>';
+    if (low === "no") return '<span class="mkt-out no">No</span>';
+    if (!o || o === "—") return '<span class="mkt-out">—</span>';
+    const safe = o.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+    return `<span class="mkt-out">${safe}</span>`;
+  }
+
+  /** Polymarket-style: circular icon + title + colored Yes/No under it. */
+  function marketCellHtml(p, linkClass) {
+    const cls = linkClass ? ` ${linkClass}` : "";
+    return (
+      `<span class="mkt-line">` +
+      marketIcon(p.icon) +
+      `<span class="mkt-text">` +
+      `<a class="mkt-title${cls}" href="${marketUrl(p)}" target="_blank" rel="noopener noreferrer"></a>` +
+      outcomeLabel(p.outcome) +
+      `</span></span>`
+    );
+  }
+
   function outcomeBadge(outcome) {
     const o = String(outcome || "").trim().toLowerCase();
     if (o === "yes") return '<span class="yn yn-y" title="Yes">Y</span>';
@@ -377,12 +406,12 @@
       tr.innerHTML =
         `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="num">${fmtUsd(r.currentValue)}</td>` +
-        `<td class="market"><span class="mkt-line">${outcomeBadge(r.outcome)}<a href="${marketUrl(r)}" target="_blank" rel="noopener noreferrer"></a></span></td>` +
+        `<td class="market">${marketCellHtml(r)}</td>` +
         `<td class="num">${fmtShares(r.size)}</td>` +
         `<td class="num hide-sm">${fmtCts(r.avgPrice)} / ${fmtCts(r.curPrice)}</td>` +
         `<td class="num ${pnlCls}">${fmtUsd(r.cashPnl)}</td>` +
         `<td class="sharps-cell">${sharps}</td>`;
-      tr.querySelector("a").textContent = r.title;
+      tr.querySelector("a.mkt-title").textContent = r.title;
       frag.appendChild(tr);
       if (open) frag.appendChild(portDetailRow(r));
     }
@@ -539,8 +568,8 @@
         `<td class="num">${fmtShares(a.size)}</td>` +
         `<td class="num hide-sm">${a.price != null ? fmtCts(a.price) : "—"}</td>` +
         `<td class="num hide-sm">${a.usdcSize != null ? fmtUsd(a.usdcSize) : "—"}</td>` +
-        `<td class="market"><span class="mkt-line">${outcomeBadge(a.outcome)}<a class="act-mkt" href="${marketUrl(a)}" target="_blank" rel="noopener noreferrer"></a></span></td>`;
-      tr.querySelector("a.act-mkt").textContent = a.title || a.slug || "—";
+        `<td class="market">${marketCellHtml(a, "act-mkt")}</td>`;
+      tr.querySelector("a.mkt-title").textContent = a.title || a.slug || "—";
       frag.appendChild(tr);
     }
     body.appendChild(frag);

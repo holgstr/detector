@@ -185,13 +185,52 @@ td.market a {
   text-decoration: none;
 }
 td.market a:hover { text-decoration: underline; }
+td.market { vertical-align: middle; }
 
 .mkt-line {
   display: inline-flex;
-  align-items: baseline;
-  gap: 0.4rem;
+  align-items: center;
+  gap: 0.55rem;
   min-width: 0;
+  max-width: 100%;
 }
+.mkt-icon {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #ececec;
+}
+.mkt-icon-empty {
+  display: inline-block;
+  border-radius: 50%;
+  background: #e8e8e8;
+}
+.mkt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  line-height: 1.25;
+}
+a.mkt-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* allow wrap to 2 lines-ish without crushing table too much */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.mkt-out {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+.mkt-out.yes { color: var(--yes); }
+.mkt-out.no { color: var(--no); }
+
 .yn {
   flex: 0 0 auto;
   display: inline-flex;
