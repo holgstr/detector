@@ -288,6 +288,7 @@ th.expand-h, td.expand {
 }
 tr.market-row.open .chev::before,
 tr.port-row.open .chev::before,
+tr.act-row.open .chev::before,
 tr.holder-row.open .chev::before { transform: rotate(90deg); }
 
 tr.port-row { cursor: pointer; }
@@ -295,9 +296,42 @@ tr.port-row:hover td { background: var(--hover); }
 tr.port-row.open td { background: #f5f5f5; }
 tr.port-row td { vertical-align: middle; }
 
+tr.act-row { cursor: pointer; }
+tr.act-row:hover td { background: var(--hover); }
+tr.act-row.open td { background: #f5f5f5; }
+tr.act-row td { vertical-align: middle; }
+
 tr.holder-row { cursor: pointer; }
 tr.holder-row:hover td { background: var(--hover); }
 tr.holder-row.open td { background: #f0f0f0; }
+
+.strength-panel {
+  margin-bottom: 0.75rem;
+}
+.strength-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  align-items: center;
+  margin: 0 0 0.55rem;
+  padding: 0.35rem 0.15rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-family: var(--mono);
+}
+.strength-summary b { color: var(--fg); font-weight: 500; }
+.strength-detail {
+  padding-left: 0.15rem;
+  padding-right: 0.15rem;
+}
+.tracked-label {
+  margin: 0.35rem 0 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 
 .port-detail {
   padding: 0.55rem 0.75rem 0.75rem 1.4rem;

@@ -5,6 +5,7 @@
   const DATA = "https://data-api.polymarket.com";
   const GAMMA = "https://gamma-api.polymarket.com";
   const PORT_COLS = 7;
+  const ACT_COLS = 8;
 
   /** Add wallets here — names resolve from Polymarket leaderboard when possible. */
   /** @type {Array<{wallet:string, name?:string}>} */
@@ -42,6 +43,13 @@
   const expandedHolders = new Set();
   /** @type {Map<string, {status:string, trades:object[]}>} */
   const holderTrades = new Map();
+
+  /** Expanded activity row keys */
+  const expandedActs = new Set();
+  /** conditionId → strength market object from DetectorStrength */
+  const strengthCache = new Map();
+  /** conditionId → in-flight load promise */
+  const strengthPromises = new Map();
 
   /** @type {Array<object>} */
   let actRows = [];
@@ -184,6 +192,65 @@
 
   function holderKey(posKey, wallet) {
     return `${posKey}|${String(wallet || "").toLowerCase()}`;
+  }
+
+  function actRowKey(a) {
+    return [
+      String(a.proxyWallet || "").toLowerCase(),
+      String(a.conditionId || ""),
+      String(a.side || "").toUpperCase(),
+      String(a.outcome || "").toLowerCase(),
+      String(a.timestamp || ""),
+    ].join("|");
+  }
+
+  function strengthBlockHtml(conditionId) {
+    if (!conditionId) {
+      return `<div class="strength-panel"><span class="na">No market id</span></div>`;
+    }
+    const api = window.DetectorStrength;
+    if (!api) {
+      return `<div class="strength-panel"><span class="na">Strength module unavailable</span></div>`;
+    }
+    const cached = strengthCache.get(conditionId);
+    if (!cached) {
+      return `<div class="strength-panel">${api.summaryHtml({ strength_status: "pending" })}</div>`;
+    }
+    return `<div class="strength-panel">${api.detailHtml(cached)}</div>`;
+  }
+
+  async function ensureStrength(conditionId) {
+    if (!conditionId || !window.DetectorStrength) return null;
+    if (strengthCache.has(conditionId)) return strengthCache.get(conditionId);
+    if (strengthPromises.has(conditionId)) return strengthPromises.get(conditionId);
+    const p = (async () => {
+      try {
+        const m = await window.DetectorStrength.load(conditionId);
+        strengthCache.set(conditionId, m);
+        return m;
+      } catch {
+        const err = { condition_id: conditionId, strength_status: "error", yes_holders: [], no_holders: [] };
+        strengthCache.set(conditionId, err);
+        return err;
+      } finally {
+        strengthPromises.delete(conditionId);
+      }
+    })();
+    strengthPromises.set(conditionId, p);
+    return p;
+  }
+
+  function requestStrengthAndRefresh(conditionId, refreshFn) {
+    if (!conditionId) {
+      refreshFn();
+      return;
+    }
+    if (strengthCache.has(conditionId)) {
+      refreshFn();
+      return;
+    }
+    refreshFn();
+    ensureStrength(conditionId).then(() => refreshFn());
   }
 
   async function loadProfile(wallet, signal) {
@@ -398,6 +465,8 @@
     tr.innerHTML =
       `<td colspan="${PORT_COLS}">` +
       `<div class="port-detail">` +
+      strengthBlockHtml(r.conditionId) +
+      `<div class="tracked-label">Tracked positions</div>` +
       `<table class="holders port-holders">` +
       `<thead><tr>` +
       `<th class="expand-h" aria-hidden="true"></th>` +
@@ -490,10 +559,12 @@
       for (const hk of [...expandedHolders]) {
         if (hk.startsWith(`${key}|`)) expandedHolders.delete(hk);
       }
-    } else {
-      expandedPorts.add(key);
+      renderPortfolio();
+      return;
     }
-    renderPortfolio();
+    expandedPorts.add(key);
+    const row = portRows.find((r) => r.key === key);
+    requestStrengthAndRefresh(row?.conditionId, renderPortfolio);
   }
 
   function toggleHolder(hk, wallet, conditionId) {
@@ -592,6 +663,19 @@
     return list;
   }
 
+  function actDetailRow(a, key) {
+    const tr = document.createElement("tr");
+    tr.className = "detail-row act-detail-row";
+    tr.dataset.actKey = key;
+    tr.innerHTML =
+      `<td colspan="${ACT_COLS}">` +
+      `<div class="port-detail">` +
+      strengthBlockHtml(a.conditionId) +
+      `</div>` +
+      `</td>`;
+    return tr;
+  }
+
   function renderActivity() {
     const list = filteredActRows();
     $("actMeta").innerHTML =
@@ -607,12 +691,19 @@
     $("actEmpty").hidden = true;
     const frag = document.createDocumentFragment();
     for (const a of list) {
+      const key = actRowKey(a);
+      const open = expandedActs.has(key);
       const tr = document.createElement("tr");
+      tr.className = "act-row" + (open ? " open" : "");
+      tr.dataset.actKey = key;
+      tr.dataset.condition = a.conditionId || "";
+      tr.tabIndex = 0;
       const side = String(a.side || a.type || "").toUpperCase();
       const sideCls = side === "BUY" ? "trade-buy" : side === "SELL" ? "trade-sell" : "";
       const name = shortName(a.name || profiles.get(String(a.proxyWallet || "").toLowerCase())?.name || fmtWallet(a.proxyWallet));
       const title = a._parts > 1 ? `${a._parts} fills` : "";
       tr.innerHTML =
+        `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="num" title="${title}">${fmtWhen(a.timestamp)}</td>` +
         `<td><a class="act-trader" href="https://polymarket.com/profile/${a.proxyWallet}" target="_blank" rel="noopener noreferrer">${name}</a></td>` +
         `<td class="${sideCls}">${side || "—"}</td>` +
@@ -622,8 +713,20 @@
         `<td class="num">${a.usdcSize != null ? fmtUsd(a.usdcSize) : "—"}</td>`;
       tr.querySelector("a.mkt-title").textContent = a.title || a.slug || "—";
       frag.appendChild(tr);
+      if (open) frag.appendChild(actDetailRow(a, key));
     }
     body.appendChild(frag);
+  }
+
+  function toggleAct(key, conditionId) {
+    if (!key) return;
+    if (expandedActs.has(key)) {
+      expandedActs.delete(key);
+      renderActivity();
+      return;
+    }
+    expandedActs.add(key);
+    requestStrengthAndRefresh(conditionId, renderActivity);
   }
 
   async function loadActivity() {
@@ -641,6 +744,7 @@
       actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       await fillMissingIcons(actRows);
       actLoaded = true;
+      expandedActs.clear();
       renderActivity();
     } catch (e) {
       err.hidden = false;
@@ -702,6 +806,22 @@
     if (portRow) {
       e.preventDefault();
       togglePort(portRow.dataset.portKey);
+    }
+  });
+
+  $("actBody").addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    const actRow = e.target.closest("tr.act-row");
+    if (actRow) toggleAct(actRow.dataset.actKey, actRow.dataset.condition);
+  });
+
+  $("actBody").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (e.target.closest("a")) return;
+    const actRow = e.target.closest("tr.act-row");
+    if (actRow) {
+      e.preventDefault();
+      toggleAct(actRow.dataset.actKey, actRow.dataset.condition);
     }
   });
 

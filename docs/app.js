@@ -114,12 +114,14 @@ async function listMarkets({ tagSlug, minVolume24, signal }) {
       if (!isBinaryYesNo(outcomes)) continue;
       const event = (m.events && m.events[0]) || {};
       const slug = m.slug || "";
+      const icon = String(m.icon || m.image || event.icon || event.image || "").trim();
       out.push({
         condition_id: m.conditionId,
         slug,
         question: m.question || slug,
         event_slug: event.slug || "",
         event_title: event.title || "",
+        icon,
         url: event.slug
           ? `https://polymarket.com/event/${event.slug}/${slug}`
           : `https://polymarket.com/market/${slug}`,
@@ -600,6 +602,97 @@ function detailRow(m, colSpan) {
   return tr;
 }
 
+/** eventSlug → icon URL for markets missing market-level icons. */
+const eventIconCache = new Map();
+
+function marketIconHtml(url) {
+  if (!url) return '<span class="mkt-icon mkt-icon-empty" aria-hidden="true"></span>';
+  const safe = String(url).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return `<img class="mkt-icon" src="${safe}" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`;
+}
+
+async function fetchEventIcon(eventSlug, signal) {
+  if (!eventSlug) return "";
+  if (eventIconCache.has(eventSlug)) return eventIconCache.get(eventSlug) || "";
+  try {
+    const data = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(eventSlug)}`, signal);
+    const e = Array.isArray(data) ? data[0] : data;
+    const icon = String(e?.icon || e?.image || "").trim();
+    eventIconCache.set(eventSlug, icon);
+    return icon;
+  } catch {
+    eventIconCache.set(eventSlug, "");
+    return "";
+  }
+}
+
+async function fillMissingMarketIcons(items, signal) {
+  const slugs = [...new Set(
+    items.filter((i) => !i.icon && (i.event_slug || i.eventSlug)).map((i) => i.event_slug || i.eventSlug),
+  )];
+  if (!slugs.length) return;
+  const conc = 6;
+  for (let i = 0; i < slugs.length; i += conc) {
+    await Promise.all(slugs.slice(i, i + conc).map((s) => fetchEventIcon(s, signal)));
+  }
+  for (const i of items) {
+    if (!i.icon) {
+      const slug = i.event_slug || i.eventSlug;
+      const icon = slug ? eventIconCache.get(slug) : "";
+      if (icon) i.icon = icon;
+    }
+  }
+}
+
+function strengthSummaryHtml(m) {
+  if (!m || m.strength_status === "pending") {
+    return `<div class="strength-summary"><span class="pending">Loading sharps…</span></div>`;
+  }
+  if (m.strength_status === "error") {
+    return `<div class="strength-summary"><span class="na">Could not load sharps.</span></div>`;
+  }
+  if (m.strength_status === "empty") {
+    return `<div class="strength-summary"><span class="na">No &gt;$100k holders</span></div>`;
+  }
+  const donut = shareDonut(m.yes_qualified_size, m.no_qualified_size);
+  return (
+    `<div class="strength-summary">` +
+    `<span class="shares-wrap">Shares <b>${fmtShares(m.yes_qualified_size)} / ${fmtShares(m.no_qualified_size)}</b>${donut}</span>` +
+    `<span>Strength <b>${fmtPct(m.yes_strength)} / ${fmtPct(m.no_strength)}</b></span>` +
+    `<span>Traders <b>${m.yes_qualified_count} / ${m.no_qualified_count}</b></span>` +
+    `<span>Side <b>${m.stronger}</b></span>` +
+    `</div>`
+  );
+}
+
+function strengthDetailHtml(m) {
+  let html = strengthSummaryHtml(m);
+  if (m && m.strength_status === "ready") {
+    html +=
+      `<div class="detail strength-detail">` +
+      holdersTable("Yes", m.yes_holders || []) +
+      holdersTable("No", m.no_holders || []) +
+      `</div>`;
+  }
+  return html;
+}
+
+async function loadStrengthMarket(conditionId, signal) {
+  const s = await computeStrength(conditionId, signal);
+  const market = { condition_id: conditionId, ...s };
+  if (market.strength_status === "ready") {
+    await fillLastTrades(market, signal);
+  }
+  return market;
+}
+
+/** Shared with Portfolio / Activity expand panels. */
+window.DetectorStrength = {
+  load: loadStrengthMarket,
+  summaryHtml: strengthSummaryHtml,
+  detailHtml: strengthDetailHtml,
+};
+
 function render() {
   setSortHeaders();
   const list = filteredRows();
@@ -648,13 +741,13 @@ function render() {
     tr.innerHTML =
       `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
       `<td class="num">${fmtVol(m.volume_24hr)}</td>` +
-      `<td class="market"><a href="${m.url}" target="_blank" rel="noopener noreferrer"></a><span class="evt"></span></td>` +
+      `<td class="market"><span class="mkt-line">${marketIconHtml(m.icon)}<span class="mkt-text"><a class="mkt-title" href="${m.url}" target="_blank" rel="noopener noreferrer"></a><span class="evt"></span></span></span></td>` +
       `<td class="num hide-sm">${fmtPrice(m)}</td>` +
       `<td class="num"><span class="shares-wrap"><span class="shares-text">${sharesCell}</span>${donut}</span></td>` +
       `<td class="num">${strengthCell}</td>` +
       `<td class="num">${tradersCell}</td>` +
       `<td class="num hide-sm">${m.stronger === "tie" && m.strength_status !== "ready" ? "—" : m.stronger}</td>`;
-    tr.querySelector("a").textContent = m.question;
+    tr.querySelector("a.mkt-title").textContent = m.question;
     tr.querySelector(".evt").textContent = m.event_title || m.event_slug || "";
     frag.appendChild(tr);
 
@@ -725,6 +818,7 @@ async function load() {
       signal,
     });
     rows = markets;
+    await fillMissingMarketIcons(rows, signal);
     $("tagLabel").textContent = `${tagInfo.label} (${tagInfo.id})`;
     render();
     $("load").textContent = "Sharps…";
