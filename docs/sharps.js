@@ -636,6 +636,7 @@
       const type = $("actType").value;
       const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, type)));
       actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      await fillMissingIcons(actRows);
       actLoaded = true;
       renderActivity();
     } catch (e) {
