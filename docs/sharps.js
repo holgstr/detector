@@ -16,6 +16,8 @@
     { wallet: "0xc851cd9bee7d262afd78674f861f9f576a12cd2a", name: "betwick" },
     { wallet: "0x1cc16713196d456f86fa9c7387dd326a7f73b8df", name: "Wickier" },
     { wallet: "0xde7be6d489bce070a959e0cb813128ae659b5f4b", name: "wan123" },
+    { wallet: "0xc8b9a30184244d427169cf62485dde6041b2b836", name: "SnowLover7" },
+    { wallet: "0x55291dc2069439a6de5c93a9bec8da2215a9e5b9", name: "i2dt" },
   ];
 
   const $ = (id) => document.getElementById(id);
