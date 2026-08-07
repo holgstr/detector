@@ -3,6 +3,7 @@
  */
 (function () {
   const DATA = "https://data-api.polymarket.com";
+  const GAMMA = "https://gamma-api.polymarket.com";
   const PORT_COLS = 7;
 
   /** Add wallets here — names resolve from Polymarket leaderboard when possible. */
@@ -24,6 +25,9 @@
 
   /** @type {Map<string, {wallet:string, name:string, pnl?:number, vol?:number, profileImage?:string}>} */
   const profiles = new Map();
+
+  /** eventSlug → icon URL ("" if looked up and missing). Multi-outcome markets often omit market.icon. */
+  const eventIconCache = new Map();
 
   /** @type {Array<object>} */
   let portRows = [];
@@ -105,6 +109,47 @@
     return `<img class="mkt-icon" src="${safe}" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`;
   }
 
+  function resolvedIcon(p) {
+    if (p?.icon) return p.icon;
+    if (p?.eventSlug && eventIconCache.has(p.eventSlug)) {
+      return eventIconCache.get(p.eventSlug) || "";
+    }
+    return "";
+  }
+
+  async function fetchEventIcon(eventSlug, signal) {
+    if (!eventSlug) return "";
+    if (eventIconCache.has(eventSlug)) return eventIconCache.get(eventSlug) || "";
+    try {
+      const data = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(eventSlug)}`, signal);
+      const e = Array.isArray(data) ? data[0] : data;
+      const icon = String(e?.icon || e?.image || "").trim();
+      eventIconCache.set(eventSlug, icon);
+      return icon;
+    } catch {
+      eventIconCache.set(eventSlug, "");
+      return "";
+    }
+  }
+
+  /** Fill empty market icons from the parent event (Polymarket does this for seats/races). */
+  async function fillMissingIcons(items, signal) {
+    const slugs = [...new Set(
+      items.filter((i) => !i.icon && i.eventSlug).map((i) => i.eventSlug),
+    )];
+    if (!slugs.length) return;
+    const conc = 6;
+    for (let i = 0; i < slugs.length; i += conc) {
+      await Promise.all(slugs.slice(i, i + conc).map((s) => fetchEventIcon(s, signal)));
+    }
+    for (const i of items) {
+      if (!i.icon && i.eventSlug) {
+        const icon = eventIconCache.get(i.eventSlug);
+        if (icon) i.icon = icon;
+      }
+    }
+  }
+
   function outcomeLabel(outcome) {
     const o = String(outcome || "").trim();
     const low = o.toLowerCase();
@@ -120,7 +165,7 @@
     const cls = linkClass ? ` ${linkClass}` : "";
     return (
       `<span class="mkt-line">` +
-      marketIcon(p.icon) +
+      marketIcon(resolvedIcon(p)) +
       `<span class="mkt-text">` +
       `<a class="mkt-title${cls}" href="${marketUrl(p)}" target="_blank" rel="noopener noreferrer"></a>` +
       outcomeLabel(p.outcome) +
@@ -479,6 +524,7 @@
         byWallet.set(t.wallet, positions);
       }));
       portRows = aggregatePositions(byWallet);
+      await fillMissingIcons(portRows);
       portLoaded = true;
       renderPortfolio();
     } catch (e) {
