@@ -13,7 +13,6 @@
     { wallet: "0x23d81ba9371e576015c1e562db09c689f56b0288", name: "flawfence" },
     { wallet: "0x614dc8d3542c12103d2c6a3553fd761e391d1546", name: "mr.ozi" },
     { wallet: "0x7bc14171ccb0d3e6bac219ec6a76211826e28db4", name: "coali10" },
-    { wallet: "0x60a92c8620846d81f5ea17b0564e0d4b7c545a71", name: "paddaa" },
     { wallet: "0x2b9dbf4b6e0e11309a9d6d2a09b72f65f652adc0", name: "seal7" },
     { wallet: "0xc851cd9bee7d262afd78674f861f9f576a12cd2a", name: "betwick" },
     { wallet: "0x1cc16713196d456f86fa9c7387dd326a7f73b8df", name: "Wickier" },
