@@ -21,6 +21,7 @@
     { wallet: "0xc8b9a30184244d427169cf62485dde6041b2b836", name: "SnowLover7" },
     { wallet: "0x55291dc2069439a6de5c93a9bec8da2215a9e5b9", name: "i2dt" },
     { wallet: "0xbaa2bcb5439e985ce4ccf815b4700027d1b92c73", name: "denizz" },
+    { wallet: "0xd24b95551eb288ff82bb625dcd7f32f62abdef76", name: "BiDiFakePolls" },
   ];
 
   const $ = (id) => document.getElementById(id);
