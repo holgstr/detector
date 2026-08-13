@@ -169,15 +169,22 @@
     return `<span class="mkt-out">${safe}</span>`;
   }
 
+  /** Compact ¢ price shown on mobile rows (desktop keeps the dedicated column). */
+  function mobilePriceHtml(p, label) {
+    if (p == null || Number.isNaN(Number(p))) return "";
+    const title = label ? ` title="${label}"` : "";
+    return `<span class="mkt-px"${title}>${fmtCts(Number(p))}</span>`;
+  }
+
   /** Polymarket-style: circular icon + title + colored Yes/No under it. */
-  function marketCellHtml(p, linkClass) {
+  function marketCellHtml(p, linkClass, mobilePrice, priceLabel) {
     const cls = linkClass ? ` ${linkClass}` : "";
     return (
       `<span class="mkt-line">` +
       marketIcon(resolvedIcon(p)) +
       `<span class="mkt-text">` +
       `<a class="mkt-title${cls}" href="${marketUrl(p)}" target="_blank" rel="noopener noreferrer"></a>` +
-      outcomeLabel(p.outcome) +
+      `<span class="mkt-meta">${outcomeLabel(p.outcome)}${mobilePriceHtml(mobilePrice, priceLabel)}</span>` +
       `</span></span>`
     );
   }
@@ -450,7 +457,7 @@
         `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="trader"><a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer">${shortName(h.name, 22)}</a></td>` +
         `<td class="num">${fmtUsd(h.currentValue)}</td>` +
-        `<td class="num">${fmtShares(h.size)}</td>` +
+        `<td class="num">${fmtShares(h.size)}${mobilePriceHtml(h.curPrice, "Now")}</td>` +
         `<td class="num hide-sm">${fmtCts(h.avgPrice)} / ${fmtCts(h.curPrice)}</td>` +
         `<td class="num ${pnlCls}">${fmtUsd(h.cashPnl)}</td>` +
         `</tr>`;
@@ -521,7 +528,7 @@
       tr.innerHTML =
         `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="num">${fmtUsd(r.currentValue)}</td>` +
-        `<td class="market">${marketCellHtml(r)}</td>` +
+        `<td class="market">${marketCellHtml(r, "", r.curPrice, "Now")}</td>` +
         `<td class="num">${fmtShares(r.size)}</td>` +
         `<td class="num hide-sm">${fmtCts(r.avgPrice)} / ${fmtCts(r.curPrice)}</td>` +
         `<td class="num ${pnlCls}">${fmtUsd(r.cashPnl)}</td>` +
@@ -709,7 +716,7 @@
         `<td class="${sideCls}">${side || "—"}</td>` +
         `<td class="num">${fmtShares(a.size)}</td>` +
         `<td class="num hide-sm">${a.price != null ? fmtCts(a.price) : "—"}</td>` +
-        `<td class="market">${marketCellHtml(a, "act-mkt")}</td>` +
+        `<td class="market">${marketCellHtml(a, "act-mkt", a.price, "Fill price")}</td>` +
         `<td class="num">${a.usdcSize != null ? fmtUsd(a.usdcSize) : "—"}</td>`;
       tr.querySelector("a.mkt-title").textContent = a.title || a.slug || "—";
       frag.appendChild(tr);
