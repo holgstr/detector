@@ -234,6 +234,21 @@ a.mkt-title {
 }
 .mkt-out.yes { color: var(--yes); }
 .mkt-out.no { color: var(--no); }
+.mkt-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.mkt-px {
+  display: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+}
 
 .yn {
   flex: 0 0 auto;
@@ -475,4 +490,10 @@ table.holders .last-trade {
 @media (max-width: 720px) {
   .hide-sm { display: none; }
   .detail { grid-template-columns: 1fr; padding-left: 0.75rem; }
+  .mkt-px { display: inline; }
+  td.num > .mkt-px {
+    display: block;
+    margin-top: 0.08rem;
+    font-size: 0.72rem;
+  }
 }
