@@ -775,6 +775,7 @@
     });
     if (name === "portfolio" && !portLoaded) loadPortfolio();
     if (name === "activity" && !actLoaded) loadActivity();
+    if (name === "flows") window.DetectorFlows?.ensureLoaded();
   }
 
   document.querySelectorAll(".tab").forEach((btn) => {
@@ -856,4 +857,8 @@
   });
   $("actQ").addEventListener("input", renderActivity);
   $("actMinUsdc").addEventListener("input", renderActivity);
+
+  window.DetectorSharps = {
+    wallets: new Set(TRACKED.map((t) => t.wallet.toLowerCase())),
+  };
 })();
