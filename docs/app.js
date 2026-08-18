@@ -835,7 +835,7 @@ async function load() {
 }
 
 function bindSort() {
-  document.querySelectorAll("th.sortable").forEach((th) => {
+  document.querySelectorAll("#tab-markets th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
       const key = th.getAttribute("data-key");
       if (sortKey === key) sortDir = sortDir === "desc" ? "asc" : "desc";
@@ -876,3 +876,15 @@ $("minVol").addEventListener("keydown", (e) => {
 });
 bindSort();
 load();
+
+window.DetectorCatalog = {
+  listMarkets,
+  fillMissingMarketIcons,
+  marketIconHtml,
+  fmtVol,
+  fmtPrice,
+  fmtShares,
+  shareDonut,
+  getJSON,
+  mapPool,
+};

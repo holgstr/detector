@@ -15,6 +15,7 @@
       <h1>Detector</h1>
       <nav class="tabs" role="tablist" aria-label="Main">
         <button type="button" class="tab active" role="tab" aria-selected="true" data-tab="markets">Markets</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-tab="flows">Flows</button>
         <button type="button" class="tab" role="tab" aria-selected="false" data-tab="portfolio">Portfolio</button>
         <button type="button" class="tab" role="tab" aria-selected="false" data-tab="activity">Activity</button>
       </nav>
@@ -72,6 +73,66 @@
         <tbody id="tbody"></tbody>
       </table>
       <p id="empty" class="sub" hidden>No markets match.</p>
+    </section>
+
+    <section id="tab-flows" class="tab-panel" role="tabpanel" hidden>
+      <div class="bar">
+        <label class="field search">Search
+          <input id="flowQ" type="search" placeholder="Filter loaded markets" autocomplete="off" />
+        </label>
+        <label class="field">Tag
+          <select id="flowTag">
+            <option value="elections" selected>elections</option>
+            <option value="politics">politics</option>
+            <option value="geopolitics">geopolitics</option>
+            <option value="crypto">crypto</option>
+            <option value="sports">sports</option>
+          </select>
+        </label>
+        <label class="field">Min 24h vol
+          <input id="flowMinVol" type="number" min="0" step="1000" value="10000" />
+        </label>
+        <label class="field" title="Window of aggressor (taker) fills to sum">Lookback
+          <select id="flowHours">
+            <option value="24" selected>24h</option>
+            <option value="48">48h</option>
+          </select>
+        </label>
+        <label class="field" title="Hide fills with USDC notional under this">Min fill $
+          <input id="flowMinFill" type="number" min="0" step="1" value="0" />
+        </label>
+        <label class="field" title="Only count taker fills at or below this USDC size (retail tape). 0 = all takers.">Max fill $
+          <input id="flowMaxFill" type="number" min="0" step="10" value="0" />
+        </label>
+        <label class="field" title="Hide markets where Yes or No price is above this (¢). 0 = off.">Max price ¢
+          <input id="flowMaxPriceCts" type="number" min="0" max="100" step="1" value="0" />
+        </label>
+        <label class="field check" title="Drop fills from tracked sharp wallets">Exclude sharps
+          <input id="flowSkipSharps" type="checkbox" checked />
+        </label>
+        <button id="flowLoad" type="button">Load</button>
+      </div>
+
+      <div class="meta" id="flowMeta"></div>
+      <div class="meta"><span>tag <b id="flowTagLabel">—</b></span></div>
+      <div id="flowErr" class="err" hidden></div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="expand-h" aria-hidden="true"></th>
+            <th class="sortable num active" data-flow-sort="taker_usd" data-dir="↓" title="USDC taken off the book (aggressor fills) in the lookback window">Taker $</th>
+            <th class="sortable num" data-flow-sort="orders" title="Number of taker fills in the lookback window">Orders</th>
+            <th class="sortable" data-flow-sort="question">Market</th>
+            <th class="num hide-sm">Y / N</th>
+            <th class="sortable num" data-flow-sort="net_usd_abs" title="Taker USDC on Yes vs No. Sort is |net Yes-pressure|">Flow Y/N</th>
+            <th class="sortable num" data-flow-sort="net_takers_abs" title="Unique taker wallets net-long Yes vs No">Takers Y/N</th>
+            <th class="sortable num hide-sm" data-flow-sort="stronger" title="Side with positive Yes-pressure (buy Yes / sell No)">Side</th>
+          </tr>
+        </thead>
+        <tbody id="flowBody"></tbody>
+      </table>
+      <p id="flowEmpty" class="sub" hidden>No markets match.</p>
     </section>
 
     <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
@@ -135,5 +196,6 @@
   </div>
   <script src="./app.js" defer></script>
   <script src="./sharps.js" defer></script>
+  <script src="./flows.js" defer></script>
 </body>
 </html>

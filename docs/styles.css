@@ -98,6 +98,13 @@ h1 {
 
 .field.search { flex: 1 1 180px; min-width: 160px; }
 .field.grow { flex: 1 1 140px; }
+.field.check input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0.5rem 0 0.35rem;
+  padding: 0;
+  justify-self: start;
+}
 
 input, select, button {
   font: 13px/1.2 var(--sans);
@@ -280,11 +287,11 @@ td.market .evt {
   font-size: 0.75rem;
 }
 
-tr.market-row { cursor: pointer; }
-tr.market-row:hover td { background: var(--hover); }
-tr.market-row.open td { background: #f5f5f5; }
+tr.market-row, tr.flow-row { cursor: pointer; }
+tr.market-row:hover td, tr.flow-row:hover td { background: var(--hover); }
+tr.market-row.open td, tr.flow-row.open td { background: #f5f5f5; }
 
-tr.market-row td {
+tr.market-row td, tr.flow-row td {
   vertical-align: middle;
 }
 
@@ -302,6 +309,7 @@ th.expand-h, td.expand {
   transition: transform 0.12s ease;
 }
 tr.market-row.open .chev::before,
+tr.flow-row.open .chev::before,
 tr.port-row.open .chev::before,
 tr.act-row.open .chev::before,
 tr.holder-row.open .chev::before { transform: rotate(90deg); }
@@ -419,6 +427,10 @@ tr.detail-row td {
   padding: 0;
   border-bottom: 1px solid var(--line);
   background: #f7f7f7;
+}
+tr.detail-row > td > .sub {
+  margin: 0;
+  padding: 0.45rem 0.75rem 0.1rem 1.6rem;
 }
 .detail {
   display: grid;
