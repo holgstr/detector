@@ -27,8 +27,17 @@
 
   const $ = (id) => document.getElementById(id);
 
+  const WALLET_CONCURRENCY = 6;
+  const CACHE_PORT = "detector.port.v1";
+  const CACHE_ACT = "detector.act.v1";
+  const CACHE_TTL_MS = 120_000;
+  const CACHE_STALE_MS = 600_000;
+
   /** @type {Map<string, {wallet:string, name:string, pnl?:number, vol?:number, profileImage?:string}>} */
   const profiles = new Map();
+
+  let portAbort = null;
+  let actAbort = null;
 
   /** eventSlug → {icon, isSports}. Multi-outcome markets often omit market.icon. */
   const eventMetaCache = new Map();
@@ -55,7 +64,34 @@
 
   /** @type {Array<object>} */
   let actRows = [];
+  /** Pre-aggregated activity rows — rebuilt when actRows changes. */
+  let actAggregated = [];
   let actLoaded = false;
+
+  function mapPool(items, concurrency, fn, signal) {
+    const pool = window.DetectorCatalog?.mapPool;
+    if (pool) return pool(items, concurrency, fn, signal);
+    return Promise.all(items.map((item, idx) => fn(item, idx)));
+  }
+
+  function readCache(key) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return null;
+      const { ts, data } = JSON.parse(raw);
+      return { data, age: Date.now() - ts };
+    } catch {
+      return null;
+    }
+  }
+
+  function writeCache(key, data) {
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ ts: Date.now(), data }));
+    } catch {
+      /* quota */
+    }
+  }
 
   async function getJSON(url, signal) {
     const res = await fetch(url, { signal });
@@ -174,6 +210,14 @@
         if (icon) i.icon = icon;
       }
     }
+  }
+
+  /** Resolve event meta in the background after first render. */
+  function ensureEventMetaLater(items, signal, onDone) {
+    if (!items.length) return;
+    ensureEventMeta(items, signal).then(() => {
+      if (!signal?.aborted) onDone();
+    }).catch(() => {});
   }
 
   function outcomeLabel(outcome) {
@@ -603,32 +647,67 @@
     loadHolderTrades(hk, wallet, conditionId);
   }
 
-  async function loadPortfolio() {
+  async function loadPortfolio(opts = {}) {
+    const { background = false, force = false } = opts;
+    portAbort?.abort();
+    const ac = new AbortController();
+    portAbort = ac;
+    const signal = ac.signal;
+
     const err = $("portErr");
     err.hidden = true;
-    $("portLoad").disabled = true;
-    $("portLoad").textContent = "Loading…";
-    expandedPorts.clear();
-    expandedHolders.clear();
-    holderTrades.clear();
-    try {
-      await Promise.all(TRACKED.map((t) => loadProfile(t.wallet)));
-      /** @type {Map<string, object[]>} */
-      const byWallet = new Map();
-      await Promise.all(TRACKED.map(async (t) => {
-        const positions = await fetchAllPositions(t.wallet);
-        byWallet.set(t.wallet, positions);
-      }));
-      portRows = aggregatePositions(byWallet);
-      await ensureEventMeta(portRows);
+    if (!background) {
+      $("portLoad").disabled = true;
+      $("portLoad").textContent = "Loading…";
+    }
+    if (!background) {
+      expandedPorts.clear();
+      expandedHolders.clear();
+      holderTrades.clear();
+    }
+
+    const cached = force ? null : readCache(CACHE_PORT);
+    if (cached && cached.age < CACHE_STALE_MS) {
+      portRows = cached.data;
       portLoaded = true;
       renderPortfolio();
+      ensureEventMetaLater(portRows, signal, renderPortfolio);
+      if (cached.age < CACHE_TTL_MS) {
+        if (!background) {
+          $("portLoad").disabled = false;
+          $("portLoad").textContent = "Refresh";
+        }
+        return;
+      }
+    }
+
+    try {
+      const needProfiles = TRACKED.filter((t) => !profiles.has(t.wallet.toLowerCase()));
+      /** @type {Map<string, object[]>} */
+      const byWallet = new Map();
+      await Promise.all([
+        mapPool(needProfiles, WALLET_CONCURRENCY, (t) => loadProfile(t.wallet, signal), signal),
+        mapPool(TRACKED, WALLET_CONCURRENCY, async (t) => {
+          const positions = await fetchAllPositions(t.wallet, signal);
+          byWallet.set(t.wallet, positions);
+        }, signal),
+      ]);
+      portRows = aggregatePositions(byWallet);
+      writeCache(CACHE_PORT, portRows);
+      portLoaded = true;
+      renderPortfolio();
+      ensureEventMetaLater(portRows, signal, renderPortfolio);
     } catch (e) {
-      err.hidden = false;
-      err.textContent = String(e.message || e);
+      if (e?.name === "AbortError") return;
+      if (!portRows.length) {
+        err.hidden = false;
+        err.textContent = String(e.message || e);
+      }
     } finally {
-      $("portLoad").disabled = false;
-      $("portLoad").textContent = "Refresh";
+      if (!background && portAbort === ac) {
+        $("portLoad").disabled = false;
+        $("portLoad").textContent = "Refresh";
+      }
     }
   }
 
@@ -674,7 +753,7 @@
   function filteredActRows() {
     const needle = $("actQ").value.trim().toLowerCase();
     const minUsdc = Math.max(0, Number($("actMinUsdc").value) || 0);
-    let list = aggregateActRows(actRows).filter((a) => !isSportsItem(a));
+    let list = actAggregated.filter((a) => !isSportsItem(a));
     if (minUsdc > 0) {
       list = list.filter((a) => (Number(a.usdcSize) || 0) >= minUsdc);
     }
@@ -685,6 +764,10 @@
       });
     }
     return list;
+  }
+
+  function rebuildActAggregated() {
+    actAggregated = aggregateActRows(actRows);
   }
 
   function actDetailRow(a, key) {
@@ -753,29 +836,62 @@
     requestStrengthAndRefresh(conditionId, renderActivity);
   }
 
-  async function loadActivity() {
+  async function loadActivity(opts = {}) {
+    const { background = false, force = false } = opts;
+    actAbort?.abort();
+    const ac = new AbortController();
+    actAbort = ac;
+    const signal = ac.signal;
+
     const err = $("actErr");
     err.hidden = true;
-    $("actLoad").disabled = true;
-    $("actLoad").textContent = "Loading…";
-    try {
-      await Promise.all(TRACKED.map((t) => {
-        if (profiles.has(t.wallet.toLowerCase())) return Promise.resolve();
-        return loadProfile(t.wallet);
-      }));
-      const limit = 200;
-      const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, "TRADE")));
-      actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      await ensureEventMeta(actRows);
+    if (!background) {
+      $("actLoad").disabled = true;
+      $("actLoad").textContent = "Loading…";
+    }
+
+    const cached = force ? null : readCache(CACHE_ACT);
+    if (cached && cached.age < CACHE_STALE_MS) {
+      actRows = cached.data;
+      rebuildActAggregated();
       actLoaded = true;
-      expandedActs.clear();
+      if (!background) expandedActs.clear();
       renderActivity();
+      ensureEventMetaLater(actRows, signal, renderActivity);
+      if (cached.age < CACHE_TTL_MS) {
+        if (!background) {
+          $("actLoad").disabled = false;
+          $("actLoad").textContent = "Refresh";
+        }
+        return;
+      }
+    }
+
+    try {
+      const needProfiles = TRACKED.filter((t) => !profiles.has(t.wallet.toLowerCase()));
+      const limit = 200;
+      const [, chunks] = await Promise.all([
+        mapPool(needProfiles, WALLET_CONCURRENCY, (t) => loadProfile(t.wallet, signal), signal),
+        mapPool(TRACKED, WALLET_CONCURRENCY, (t) => fetchActivity(t.wallet, limit, "TRADE", signal), signal),
+      ]);
+      actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      rebuildActAggregated();
+      writeCache(CACHE_ACT, actRows);
+      actLoaded = true;
+      if (!background) expandedActs.clear();
+      renderActivity();
+      ensureEventMetaLater(actRows, signal, renderActivity);
     } catch (e) {
-      err.hidden = false;
-      err.textContent = String(e.message || e);
+      if (e?.name === "AbortError") return;
+      if (!actRows.length) {
+        err.hidden = false;
+        err.textContent = String(e.message || e);
+      }
     } finally {
-      $("actLoad").disabled = false;
-      $("actLoad").textContent = "Refresh";
+      if (!background && actAbort === ac) {
+        $("actLoad").disabled = false;
+        $("actLoad").textContent = "Refresh";
+      }
     }
   }
 
@@ -852,7 +968,7 @@
 
   $("portLoad").addEventListener("click", () => {
     portLoaded = false;
-    loadPortfolio();
+    loadPortfolio({ force: true });
   });
   $("portQ").addEventListener("input", renderPortfolio);
   $("portMinValue").addEventListener("input", renderPortfolio);
@@ -870,7 +986,7 @@
 
   $("actLoad").addEventListener("click", () => {
     actLoaded = false;
-    loadActivity();
+    loadActivity({ force: true });
   });
   $("actQ").addEventListener("input", renderActivity);
   $("actMinUsdc").addEventListener("input", renderActivity);
@@ -878,4 +994,17 @@
   window.DetectorSharps = {
     wallets: new Set(TRACKED.map((t) => t.wallet.toLowerCase())),
   };
+
+  function schedulePreload() {
+    const run = () => {
+      if (!portLoaded) loadPortfolio({ background: true });
+      if (!actLoaded) loadActivity({ background: true });
+    };
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(run, { timeout: 4000 });
+    } else {
+      setTimeout(run, 2000);
+    }
+  }
+  schedulePreload();
 })();
