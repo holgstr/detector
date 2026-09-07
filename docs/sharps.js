@@ -8,7 +8,7 @@
   const ACT_COLS = 8;
 
   /** Add wallets here — names resolve from Polymarket leaderboard when possible. */
-  /** @type {Array<{wallet:string, name?:string, excludeSports?:boolean}>} */
+  /** @type {Array<{wallet:string, name?:string}>} */
   const TRACKED = [
     { wallet: "0x23d81ba9371e576015c1e562db09c689f56b0288", name: "flawfence" },
     { wallet: "0x614dc8d3542c12103d2c6a3553fd761e391d1546", name: "mr.ozi" },
@@ -22,7 +22,7 @@
     { wallet: "0xbaa2bcb5439e985ce4ccf815b4700027d1b92c73", name: "denizz" },
     { wallet: "0xd24b95551eb288ff82bb625dcd7f32f62abdef76", name: "BiDiFakePolls" },
     { wallet: "0x8a4c788f043023b8b28a762216d037e9f148532b", name: "occasionalAwareness" },
-    { wallet: "0x448861155279dbf833d041b963e3ac854599e319", name: "Flipadelphia", excludeSports: true },
+    { wallet: "0x448861155279dbf833d041b963e3ac854599e319", name: "Flipadelphia" },
   ];
 
   const $ = (id) => document.getElementById(id);
@@ -147,11 +147,6 @@
     }
   }
 
-  function trackedOpts(wallet) {
-    const w = String(wallet || "").toLowerCase();
-    return TRACKED.find((t) => t.wallet.toLowerCase() === w) || null;
-  }
-
   async function prefetchEventMeta(slugs, signal) {
     const need = [...new Set(slugs.filter((s) => s && !eventMetaCache.has(s)))];
     if (!need.length) return;
@@ -161,24 +156,16 @@
     }
   }
 
-  /** Drop sports-tagged events for wallets with excludeSports. */
-  async function filterWalletItems(wallet, items, signal) {
-    const opts = trackedOpts(wallet);
-    if (!opts?.excludeSports) return items;
-    const slugs = items.map((i) => i.eventSlug).filter(Boolean);
-    await prefetchEventMeta(slugs, signal);
-    return items.filter((i) => {
-      if (!i.eventSlug) return true;
-      const meta = eventMetaCache.get(i.eventSlug);
-      return !meta?.isSports;
-    });
+  function isSportsItem(item) {
+    const slug = item?.eventSlug;
+    if (!slug) return false;
+    const meta = eventMetaCache.get(slug);
+    return meta?.isSports === true;
   }
 
-  /** Fill empty market icons from the parent event (Polymarket does this for seats/races). */
-  async function fillMissingIcons(items, signal) {
-    const slugs = [...new Set(
-      items.filter((i) => !i.icon && i.eventSlug).map((i) => i.eventSlug),
-    )];
+  /** Resolve event icons and sports tags from Gamma (needed for icon fallback + filtering). */
+  async function ensureEventMeta(items, signal) {
+    const slugs = [...new Set(items.filter((i) => i.eventSlug).map((i) => i.eventSlug))];
     if (!slugs.length) return;
     await prefetchEventMeta(slugs, signal);
     for (const i of items) {
@@ -418,7 +405,7 @@
   function filteredPortRows() {
     const needle = $("portQ").value.trim().toLowerCase();
     const minVal = Math.max(0, Number($("portMinValue").value) || 0);
-    let list = portRows.filter((r) => (r.currentValue || 0) >= minVal);
+    let list = portRows.filter((r) => (r.currentValue || 0) >= minVal && !isSportsItem(r));
     if (needle) {
       list = list.filter((r) => {
         const hay = [r.title, r.outcome, r.slug, ...r.holders.map((h) => h.name)].join(" ").toLowerCase();
@@ -629,11 +616,11 @@
       /** @type {Map<string, object[]>} */
       const byWallet = new Map();
       await Promise.all(TRACKED.map(async (t) => {
-        const positions = await filterWalletItems(t.wallet, await fetchAllPositions(t.wallet));
+        const positions = await fetchAllPositions(t.wallet);
         byWallet.set(t.wallet, positions);
       }));
       portRows = aggregatePositions(byWallet);
-      await fillMissingIcons(portRows);
+      await ensureEventMeta(portRows);
       portLoaded = true;
       renderPortfolio();
     } catch (e) {
@@ -687,7 +674,7 @@
   function filteredActRows() {
     const needle = $("actQ").value.trim().toLowerCase();
     const minUsdc = Math.max(0, Number($("actMinUsdc").value) || 0);
-    let list = aggregateActRows(actRows);
+    let list = aggregateActRows(actRows).filter((a) => !isSportsItem(a));
     if (minUsdc > 0) {
       list = list.filter((a) => (Number(a.usdcSize) || 0) >= minUsdc);
     }
@@ -777,12 +764,9 @@
         return loadProfile(t.wallet);
       }));
       const limit = 200;
-      const chunks = await Promise.all(TRACKED.map(async (t) => {
-        const rows = await fetchActivity(t.wallet, limit, "TRADE");
-        return filterWalletItems(t.wallet, rows);
-      }));
+      const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, "TRADE")));
       actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      await fillMissingIcons(actRows);
+      await ensureEventMeta(actRows);
       actLoaded = true;
       expandedActs.clear();
       renderActivity();
