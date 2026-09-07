@@ -8,7 +8,7 @@
   const ACT_COLS = 8;
 
   /** Add wallets here — names resolve from Polymarket leaderboard when possible. */
-  /** @type {Array<{wallet:string, name?:string}>} */
+  /** @type {Array<{wallet:string, name?:string, excludeSports?:boolean}>} */
   const TRACKED = [
     { wallet: "0x23d81ba9371e576015c1e562db09c689f56b0288", name: "flawfence" },
     { wallet: "0x614dc8d3542c12103d2c6a3553fd761e391d1546", name: "mr.ozi" },
@@ -21,6 +21,8 @@
     { wallet: "0x55291dc2069439a6de5c93a9bec8da2215a9e5b9", name: "i2dt" },
     { wallet: "0xbaa2bcb5439e985ce4ccf815b4700027d1b92c73", name: "denizz" },
     { wallet: "0xd24b95551eb288ff82bb625dcd7f32f62abdef76", name: "BiDiFakePolls" },
+    { wallet: "0x8a4c788f043023b8b28a762216d037e9f148532b", name: "occasionalAwareness" },
+    { wallet: "0x448861155279dbf833d041b963e3ac854599e319", name: "Flipadelphia", excludeSports: true },
   ];
 
   const $ = (id) => document.getElementById(id);
@@ -28,8 +30,8 @@
   /** @type {Map<string, {wallet:string, name:string, pnl?:number, vol?:number, profileImage?:string}>} */
   const profiles = new Map();
 
-  /** eventSlug → icon URL ("" if looked up and missing). Multi-outcome markets often omit market.icon. */
-  const eventIconCache = new Map();
+  /** eventSlug → {icon, isSports}. Multi-outcome markets often omit market.icon. */
+  const eventMetaCache = new Map();
 
   /** @type {Array<object>} */
   let portRows = [];
@@ -120,25 +122,56 @@
 
   function resolvedIcon(p) {
     if (p?.icon) return p.icon;
-    if (p?.eventSlug && eventIconCache.has(p.eventSlug)) {
-      return eventIconCache.get(p.eventSlug) || "";
+    if (p?.eventSlug && eventMetaCache.has(p.eventSlug)) {
+      return eventMetaCache.get(p.eventSlug)?.icon || "";
     }
     return "";
   }
 
-  async function fetchEventIcon(eventSlug, signal) {
-    if (!eventSlug) return "";
-    if (eventIconCache.has(eventSlug)) return eventIconCache.get(eventSlug) || "";
+  async function fetchEventMeta(eventSlug, signal) {
+    if (!eventSlug) return { icon: "", isSports: false };
+    if (eventMetaCache.has(eventSlug)) return eventMetaCache.get(eventSlug);
     try {
       const data = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(eventSlug)}`, signal);
       const e = Array.isArray(data) ? data[0] : data;
       const icon = String(e?.icon || e?.image || "").trim();
-      eventIconCache.set(eventSlug, icon);
-      return icon;
+      const tags = Array.isArray(e?.tags) ? e.tags : [];
+      const isSports = tags.some((t) => String(t?.slug || "").toLowerCase() === "sports");
+      const meta = { icon, isSports };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
     } catch {
-      eventIconCache.set(eventSlug, "");
-      return "";
+      const meta = { icon: "", isSports: false };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
     }
+  }
+
+  function trackedOpts(wallet) {
+    const w = String(wallet || "").toLowerCase();
+    return TRACKED.find((t) => t.wallet.toLowerCase() === w) || null;
+  }
+
+  async function prefetchEventMeta(slugs, signal) {
+    const need = [...new Set(slugs.filter((s) => s && !eventMetaCache.has(s)))];
+    if (!need.length) return;
+    const conc = 6;
+    for (let i = 0; i < need.length; i += conc) {
+      await Promise.all(need.slice(i, i + conc).map((s) => fetchEventMeta(s, signal)));
+    }
+  }
+
+  /** Drop sports-tagged events for wallets with excludeSports. */
+  async function filterWalletItems(wallet, items, signal) {
+    const opts = trackedOpts(wallet);
+    if (!opts?.excludeSports) return items;
+    const slugs = items.map((i) => i.eventSlug).filter(Boolean);
+    await prefetchEventMeta(slugs, signal);
+    return items.filter((i) => {
+      if (!i.eventSlug) return true;
+      const meta = eventMetaCache.get(i.eventSlug);
+      return !meta?.isSports;
+    });
   }
 
   /** Fill empty market icons from the parent event (Polymarket does this for seats/races). */
@@ -147,13 +180,10 @@
       items.filter((i) => !i.icon && i.eventSlug).map((i) => i.eventSlug),
     )];
     if (!slugs.length) return;
-    const conc = 6;
-    for (let i = 0; i < slugs.length; i += conc) {
-      await Promise.all(slugs.slice(i, i + conc).map((s) => fetchEventIcon(s, signal)));
-    }
+    await prefetchEventMeta(slugs, signal);
     for (const i of items) {
       if (!i.icon && i.eventSlug) {
-        const icon = eventIconCache.get(i.eventSlug);
+        const icon = eventMetaCache.get(i.eventSlug)?.icon;
         if (icon) i.icon = icon;
       }
     }
@@ -599,7 +629,7 @@
       /** @type {Map<string, object[]>} */
       const byWallet = new Map();
       await Promise.all(TRACKED.map(async (t) => {
-        const positions = await fetchAllPositions(t.wallet);
+        const positions = await filterWalletItems(t.wallet, await fetchAllPositions(t.wallet));
         byWallet.set(t.wallet, positions);
       }));
       portRows = aggregatePositions(byWallet);
@@ -747,7 +777,10 @@
         return loadProfile(t.wallet);
       }));
       const limit = 200;
-      const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, "TRADE")));
+      const chunks = await Promise.all(TRACKED.map(async (t) => {
+        const rows = await fetchActivity(t.wallet, limit, "TRADE");
+        return filterWalletItems(t.wallet, rows);
+      }));
       actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       await fillMissingIcons(actRows);
       actLoaded = true;
