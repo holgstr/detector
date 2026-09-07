@@ -3,6 +3,7 @@
  */
 (function () {
   const DATA = "https://data-api.polymarket.com";
+  const GAMMA = "https://gamma-api.polymarket.com";
   const PORT_COLS = 7;
   const ACT_COLS = 8;
 
@@ -20,6 +21,8 @@
     { wallet: "0x55291dc2069439a6de5c93a9bec8da2215a9e5b9", name: "i2dt" },
     { wallet: "0xbaa2bcb5439e985ce4ccf815b4700027d1b92c73", name: "denizz" },
     { wallet: "0xd24b95551eb288ff82bb625dcd7f32f62abdef76", name: "BiDiFakePolls" },
+    { wallet: "0x8a4c788f043023b8b28a762216d037e9f148532b", name: "occasionalAwareness" },
+    { wallet: "0x448861155279dbf833d041b963e3ac854599e319", name: "Flipadelphia" },
   ];
 
   const $ = (id) => document.getElementById(id);
@@ -35,6 +38,9 @@
 
   let portAbort = null;
   let actAbort = null;
+
+  /** eventSlug → {icon, isSports}. Multi-outcome markets often omit market.icon. */
+  const eventMetaCache = new Map();
 
   /** @type {Array<object>} */
   let portRows = [];
@@ -151,14 +157,65 @@
   }
 
   function resolvedIcon(p) {
-    return p?.icon || "";
+    if (p?.icon) return p.icon;
+    if (p?.eventSlug && eventMetaCache.has(p.eventSlug)) {
+      return eventMetaCache.get(p.eventSlug)?.icon || "";
+    }
+    return "";
   }
 
-  /** Fill icons in the background — uses shared DetectorCatalog cache when available. */
-  function fillIconsLater(items, signal, onDone) {
-    const fill = window.DetectorCatalog?.fillMissingMarketIcons;
-    if (!fill || !items.length) return;
-    fill(items, signal).then(() => {
+  async function fetchEventMeta(eventSlug, signal) {
+    if (!eventSlug) return { icon: "", isSports: false };
+    if (eventMetaCache.has(eventSlug)) return eventMetaCache.get(eventSlug);
+    try {
+      const data = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(eventSlug)}`, signal);
+      const e = Array.isArray(data) ? data[0] : data;
+      const icon = String(e?.icon || e?.image || "").trim();
+      const tags = Array.isArray(e?.tags) ? e.tags : [];
+      const isSports = tags.some((t) => String(t?.slug || "").toLowerCase() === "sports");
+      const meta = { icon, isSports };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
+    } catch {
+      const meta = { icon: "", isSports: false };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
+    }
+  }
+
+  async function prefetchEventMeta(slugs, signal) {
+    const need = [...new Set(slugs.filter((s) => s && !eventMetaCache.has(s)))];
+    if (!need.length) return;
+    const conc = 6;
+    for (let i = 0; i < need.length; i += conc) {
+      await Promise.all(need.slice(i, i + conc).map((s) => fetchEventMeta(s, signal)));
+    }
+  }
+
+  function isSportsItem(item) {
+    const slug = item?.eventSlug;
+    if (!slug) return false;
+    const meta = eventMetaCache.get(slug);
+    return meta?.isSports === true;
+  }
+
+  /** Resolve event icons and sports tags from Gamma (needed for icon fallback + filtering). */
+  async function ensureEventMeta(items, signal) {
+    const slugs = [...new Set(items.filter((i) => i.eventSlug).map((i) => i.eventSlug))];
+    if (!slugs.length) return;
+    await prefetchEventMeta(slugs, signal);
+    for (const i of items) {
+      if (!i.icon && i.eventSlug) {
+        const icon = eventMetaCache.get(i.eventSlug)?.icon;
+        if (icon) i.icon = icon;
+      }
+    }
+  }
+
+  /** Resolve event meta in the background after first render. */
+  function ensureEventMetaLater(items, signal, onDone) {
+    if (!items.length) return;
+    ensureEventMeta(items, signal).then(() => {
       if (!signal?.aborted) onDone();
     }).catch(() => {});
   }
@@ -392,7 +449,7 @@
   function filteredPortRows() {
     const needle = $("portQ").value.trim().toLowerCase();
     const minVal = Math.max(0, Number($("portMinValue").value) || 0);
-    let list = portRows.filter((r) => (r.currentValue || 0) >= minVal);
+    let list = portRows.filter((r) => (r.currentValue || 0) >= minVal && !isSportsItem(r));
     if (needle) {
       list = list.filter((r) => {
         const hay = [r.title, r.outcome, r.slug, ...r.holders.map((h) => h.name)].join(" ").toLowerCase();
@@ -614,7 +671,7 @@
       portRows = cached.data;
       portLoaded = true;
       renderPortfolio();
-      fillIconsLater(portRows, signal, renderPortfolio);
+      ensureEventMetaLater(portRows, signal, renderPortfolio);
       if (cached.age < CACHE_TTL_MS) {
         if (!background) {
           $("portLoad").disabled = false;
@@ -639,7 +696,7 @@
       writeCache(CACHE_PORT, portRows);
       portLoaded = true;
       renderPortfolio();
-      fillIconsLater(portRows, signal, renderPortfolio);
+      ensureEventMetaLater(portRows, signal, renderPortfolio);
     } catch (e) {
       if (e?.name === "AbortError") return;
       if (!portRows.length) {
@@ -696,7 +753,7 @@
   function filteredActRows() {
     const needle = $("actQ").value.trim().toLowerCase();
     const minUsdc = Math.max(0, Number($("actMinUsdc").value) || 0);
-    let list = actAggregated;
+    let list = actAggregated.filter((a) => !isSportsItem(a));
     if (minUsdc > 0) {
       list = list.filter((a) => (Number(a.usdcSize) || 0) >= minUsdc);
     }
@@ -800,7 +857,7 @@
       actLoaded = true;
       if (!background) expandedActs.clear();
       renderActivity();
-      fillIconsLater(actRows, signal, renderActivity);
+      ensureEventMetaLater(actRows, signal, renderActivity);
       if (cached.age < CACHE_TTL_MS) {
         if (!background) {
           $("actLoad").disabled = false;
@@ -823,7 +880,7 @@
       actLoaded = true;
       if (!background) expandedActs.clear();
       renderActivity();
-      fillIconsLater(actRows, signal, renderActivity);
+      ensureEventMetaLater(actRows, signal, renderActivity);
     } catch (e) {
       if (e?.name === "AbortError") return;
       if (!actRows.length) {
