@@ -28,8 +28,8 @@
   /** @type {Map<string, {wallet:string, name:string, pnl?:number, vol?:number, profileImage?:string}>} */
   const profiles = new Map();
 
-  /** eventSlug → icon URL ("" if looked up and missing). Multi-outcome markets often omit market.icon. */
-  const eventIconCache = new Map();
+  /** eventSlug → { icon, isSports }. Multi-outcome markets often omit market.icon. */
+  const eventMetaCache = new Map();
 
   /** @type {Array<object>} */
   let portRows = [];
@@ -120,40 +120,48 @@
 
   function resolvedIcon(p) {
     if (p?.icon) return p.icon;
-    if (p?.eventSlug && eventIconCache.has(p.eventSlug)) {
-      return eventIconCache.get(p.eventSlug) || "";
+    if (p?.eventSlug && eventMetaCache.has(p.eventSlug)) {
+      return eventMetaCache.get(p.eventSlug).icon || "";
     }
     return "";
   }
 
-  async function fetchEventIcon(eventSlug, signal) {
-    if (!eventSlug) return "";
-    if (eventIconCache.has(eventSlug)) return eventIconCache.get(eventSlug) || "";
+  async function fetchEventMeta(eventSlug, signal) {
+    if (!eventSlug) return { icon: "", isSports: false };
+    if (eventMetaCache.has(eventSlug)) return eventMetaCache.get(eventSlug);
     try {
       const data = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(eventSlug)}`, signal);
       const e = Array.isArray(data) ? data[0] : data;
       const icon = String(e?.icon || e?.image || "").trim();
-      eventIconCache.set(eventSlug, icon);
-      return icon;
+      const isSports = Array.isArray(e?.tags) && e.tags.some((t) => t?.slug === "sports");
+      const meta = { icon, isSports };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
     } catch {
-      eventIconCache.set(eventSlug, "");
-      return "";
+      const meta = { icon: "", isSports: false };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
     }
   }
 
-  /** Fill empty market icons from the parent event (Polymarket does this for seats/races). */
-  async function fillMissingIcons(items, signal) {
-    const slugs = [...new Set(
-      items.filter((i) => !i.icon && i.eventSlug).map((i) => i.eventSlug),
-    )];
+  function isSportsItem(item) {
+    const slug = item?.eventSlug;
+    if (!slug) return false;
+    const meta = eventMetaCache.get(slug);
+    return meta?.isSports === true;
+  }
+
+  /** Resolve event icons and sports tags from Gamma (needed for icon fallback + filtering). */
+  async function ensureEventMeta(items, signal) {
+    const slugs = [...new Set(items.filter((i) => i.eventSlug).map((i) => i.eventSlug))];
     if (!slugs.length) return;
     const conc = 6;
     for (let i = 0; i < slugs.length; i += conc) {
-      await Promise.all(slugs.slice(i, i + conc).map((s) => fetchEventIcon(s, signal)));
+      await Promise.all(slugs.slice(i, i + conc).map((s) => fetchEventMeta(s, signal)));
     }
     for (const i of items) {
       if (!i.icon && i.eventSlug) {
-        const icon = eventIconCache.get(i.eventSlug);
+        const icon = eventMetaCache.get(i.eventSlug)?.icon;
         if (icon) i.icon = icon;
       }
     }
@@ -388,7 +396,7 @@
   function filteredPortRows() {
     const needle = $("portQ").value.trim().toLowerCase();
     const minVal = Math.max(0, Number($("portMinValue").value) || 0);
-    let list = portRows.filter((r) => (r.currentValue || 0) >= minVal);
+    let list = portRows.filter((r) => (r.currentValue || 0) >= minVal && !isSportsItem(r));
     if (needle) {
       list = list.filter((r) => {
         const hay = [r.title, r.outcome, r.slug, ...r.holders.map((h) => h.name)].join(" ").toLowerCase();
@@ -603,7 +611,7 @@
         byWallet.set(t.wallet, positions);
       }));
       portRows = aggregatePositions(byWallet);
-      await fillMissingIcons(portRows);
+      await ensureEventMeta(portRows);
       portLoaded = true;
       renderPortfolio();
     } catch (e) {
@@ -657,7 +665,7 @@
   function filteredActRows() {
     const needle = $("actQ").value.trim().toLowerCase();
     const minUsdc = Math.max(0, Number($("actMinUsdc").value) || 0);
-    let list = aggregateActRows(actRows);
+    let list = aggregateActRows(actRows).filter((a) => !isSportsItem(a));
     if (minUsdc > 0) {
       list = list.filter((a) => (Number(a.usdcSize) || 0) >= minUsdc);
     }
@@ -749,7 +757,7 @@
       const limit = 200;
       const chunks = await Promise.all(TRACKED.map((t) => fetchActivity(t.wallet, limit, "TRADE")));
       actRows = chunks.flat().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      await fillMissingIcons(actRows);
+      await ensureEventMeta(actRows);
       actLoaded = true;
       expandedActs.clear();
       renderActivity();
