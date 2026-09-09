@@ -211,7 +211,7 @@ func TestFormat(t *testing.T) {
 		Price:   0.32,
 		Title:   "Fed decision in September?",
 	})
-	want := "SnowLover7 BUY 32k NO @ 32c\nFed decision in September?"
+	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -229,7 +229,7 @@ func TestFormatIncludesNetPosition(t *testing.T) {
 		PositionSize:    27500,
 		PositionOutcome: "YES",
 	})
-	want := "SnowLover7 BUY 32k NO @ 32c\nFed decision in September?\nPosition: 27.5k YES"
+	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?\nPosition: 27.5k YES"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}

@@ -324,7 +324,7 @@ func displayName(a polymarket.Activity) string {
 
 // Format is the Telegram (and dry-run) body for one alert.
 //
-//	Name BUY 32k NO @ 32c
+//	Name BUY NO 32k @ 32c
 //	Market Name
 //	Position: 27.5k YES
 func Format(a Alert) string {
@@ -346,7 +346,7 @@ func Format(a Alert) string {
 		title = "—"
 	}
 	body := fmt.Sprintf("%s %s %s %s @ %s\n%s",
-		a.Name, side, formatShares(a.Size), outcome, formatCents(a.Price),
+		a.Name, side, outcome, formatShares(a.Size), formatCents(a.Price),
 		title,
 	)
 	if a.HasPosition {
