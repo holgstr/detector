@@ -73,7 +73,7 @@ func TestBuildPlanFiltersSportsAndDust(t *testing.T) {
 	api := fakeSports{"ucl": true, "election": false}
 	acts := []polymarket.Activity{
 		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "ucl", "BUY", "Yes", 500, 0.5, 20, "sports"),
-		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "Yes", 2, 0.5, 21, "dust"),
+		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "No", 2, 0.5, 21, "dust"),
 		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "Yes", 200, 0.4, 22, "keep"),
 	}
 	p, err := BuildPlan(context.Background(), api, s, acts, 10)
@@ -86,8 +86,46 @@ func TestBuildPlanFiltersSportsAndDust(t *testing.T) {
 	if p.Alerts[0].Name != "SnowLover7" || p.Alerts[0].USDC != 200 {
 		t.Fatalf("alert=%+v", p.Alerts[0])
 	}
-	if len(p.DropKeys) != 2 {
-		t.Fatalf("drop=%v", p.DropKeys)
+	if len(p.DropKeys) != 1 {
+		t.Fatalf("drop=%v (sports only; dust stays unseen until it aggregates over min)", p.DropKeys)
+	}
+	s.CommitDropped(p)
+	if s.known(polymarket.ActivityKey(acts[1])) {
+		t.Fatal("sub-min fill must remain unseen so later same-market fills can combine")
+	}
+}
+
+func TestBuildPlanAggregatesThenAppliesMinUSD(t *testing.T) {
+	s := &State{Seeded: true, Seen: map[string]int64{}}
+	w := "0xc8b9a30184244d427169cf62485dde6041b2b836"
+	acts := []polymarket.Activity{
+		act(w, "election", "BUY", "No", 40, 0.32, 10, "a"),
+		act(w, "election", "BUY", "No", 70, 0.32, 11, "b"),
+		act(w, "election", "SELL", "No", 80, 0.4, 12, "c"),
+	}
+	p, err := BuildPlan(context.Background(), fakeSports{}, s, acts, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Alerts) != 1 {
+		t.Fatalf("want one aggregated BUY: %+v", p.Alerts)
+	}
+	buy := p.Alerts[0]
+	if buy.Side != "BUY" || buy.USDC != 110 || buy.Parts != 2 {
+		t.Fatalf("buy=%+v", buy)
+	}
+	if s.known(polymarket.ActivityKey(acts[2])) {
+		t.Fatal("sub-min SELL should not be dropped")
+	}
+
+	s.CommitSent(buy)
+	later := []polymarket.Activity{acts[2], act(w, "election", "SELL", "No", 30, 0.4, 13, "d")}
+	p2, err := BuildPlan(context.Background(), fakeSports{}, s, later, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p2.Alerts) != 1 || p2.Alerts[0].Side != "SELL" || p2.Alerts[0].USDC != 110 {
+		t.Fatalf("second poll should combine leftover SELL: %+v", p2.Alerts)
 	}
 }
 
@@ -165,26 +203,44 @@ func TestCommitSentThenQuiet(t *testing.T) {
 
 func TestFormat(t *testing.T) {
 	got := Format(Alert{
-		Name:      "SnowLover7",
-		Side:      "BUY",
-		Outcome:   "Over",
-		USDC:      382.428,
-		Price:     0.6,
-		Title:     "Sweden Parliamentary Election: V Over/Under 7%?",
-		Slug:      "sweden-v",
-		EventSlug: "sweden-event",
-		Parts:     3,
+		Name:    "SnowLover7",
+		Side:    "BUY",
+		Outcome: "No",
+		Size:    32000,
+		Price:   0.32,
+		Title:   "Fed decision in September?",
 	})
-	want := "SnowLover7  BUY  Over  $382  @  60¢ (3 fills)\nSweden Parliamentary Election: V Over/Under 7%?\nhttps://polymarket.com/event/sweden-event/sweden-v"
+	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestFormatShares(t *testing.T) {
+	cases := []struct {
+		n    float64
+		want string
+	}{
+		{32_000, "32k"},
+		{1_400, "1.4k"},
+		{1_450, "1.5k"},
+		{1_000, "1k"},
+		{999, "999"},
+		{9.4, "9.4"},
+		{50, "50"},
+	}
+	for _, tc := range cases {
+		if got := formatShares(tc.n); got != tc.want {
+			t.Errorf("formatShares(%v)=%q want %q", tc.n, got, tc.want)
+		}
 	}
 }
 
 func TestStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	s := &State{Seeded: true, ChatID: 42, Seen: map[string]int64{"k": 1}}
+	min := 100.0
+	s := &State{Seeded: true, ChatID: 42, MinUSD: &min, Seen: map[string]int64{"k": 1}}
 	if err := SaveState(path, s); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +248,7 @@ func TestStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Seeded || got.ChatID != 42 || got.Seen["k"] != 1 {
+	if !got.Seeded || got.ChatID != 42 || got.Seen["k"] != 1 || got.EffectiveMinUSD(0) != 100 {
 		t.Fatalf("%+v", got)
 	}
 	missing, err := LoadState(filepath.Join(dir, "nope.json"))

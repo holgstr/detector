@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,10 +19,29 @@ const maxSeen = 8000
 
 // State is the on-disk checkpoint so restarts don't re-send old fills.
 type State struct {
-	Seeded         bool             `json:"seeded"`
-	ChatID         int64            `json:"chat_id,omitempty"`
-	TelegramOffset int64            `json:"telegram_offset,omitempty"`
-	Seen           map[string]int64 `json:"seen"`
+	Seeded         bool  `json:"seeded"`
+	ChatID         int64 `json:"chat_id,omitempty"`
+	TelegramOffset int64 `json:"telegram_offset,omitempty"`
+	// MinUSD is the live chat-controlled floor (Activity tab "Min size $").
+	// Nil means use the process default (flag / env).
+	MinUSD *float64         `json:"min_usd,omitempty"`
+	Seen   map[string]int64 `json:"seen"`
+}
+
+// EffectiveMinUSD is the chat override if set, otherwise fallback.
+func (s *State) EffectiveMinUSD(fallback float64) float64 {
+	if s != nil && s.MinUSD != nil {
+		return *s.MinUSD
+	}
+	return fallback
+}
+
+// SetMinUSD persists a chat minsize (including 0 = show everything).
+func (s *State) SetMinUSD(v float64) {
+	if v < 0 {
+		v = 0
+	}
+	s.MinUSD = &v
 }
 
 // Alert is one Telegram-ready (possibly aggregated) trade.
@@ -140,8 +160,11 @@ type Plan struct {
 	DropKeys []string
 }
 
-// BuildPlan classifies unseen fills. Sports and dust are dropped; lookup
-// failures are skipped so the next poll can retry.
+// BuildPlan classifies unseen fills. Sports are dropped; lookup failures
+// are skipped so the next poll can retry. minUSD is applied after
+// aggregating same-wallet/market/side/outcome fills, so two $40+$70
+// BUYs become one $110 alert and pass a $100 floor. Sub-floor aggregates
+// stay unseen until later fills push them over.
 func BuildPlan(ctx context.Context, api sportsLookup, s *State, acts []polymarket.Activity, minUSD float64) (Plan, error) {
 	if !s.Seeded {
 		s.Seed(acts)
@@ -180,7 +203,7 @@ func BuildPlan(ctx context.Context, api sportsLookup, s *State, acts []polymarke
 		if !ok {
 			continue
 		}
-		if sports || a.USDCSize < minUSD {
+		if sports {
 			drop = append(drop, key)
 			continue
 		}
@@ -188,9 +211,22 @@ func BuildPlan(ctx context.Context, api sportsLookup, s *State, acts []polymarke
 	}
 
 	return Plan{
-		Alerts:   aggregate(keep),
+		Alerts:   filterMinUSD(aggregate(keep), minUSD),
 		DropKeys: drop,
 	}, nil
+}
+
+func filterMinUSD(alerts []Alert, minUSD float64) []Alert {
+	if minUSD <= 0 || len(alerts) == 0 {
+		return alerts
+	}
+	out := make([]Alert, 0, len(alerts))
+	for _, a := range alerts {
+		if a.USDC >= minUSD {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // CommitDropped marks sports/dust so they aren't reconsidered.
@@ -279,18 +315,19 @@ func displayName(a polymarket.Activity) string {
 }
 
 // Format is the Telegram (and dry-run) body for one alert.
+//
+//	Name BUY NO 32k @ 32c
+//	Market Name
 func Format(a Alert) string {
 	side := a.Side
 	if side == "" {
 		side = "TRADE"
 	}
-	outcome := a.Outcome
+	outcome := strings.TrimSpace(a.Outcome)
 	if outcome == "" {
 		outcome = "—"
-	}
-	fills := ""
-	if a.Parts > 1 {
-		fills = fmt.Sprintf(" (%d fills)", a.Parts)
+	} else {
+		outcome = strings.ToUpper(outcome)
 	}
 	title := strings.TrimSpace(a.Title)
 	if title == "" {
@@ -299,26 +336,30 @@ func Format(a Alert) string {
 	if title == "" {
 		title = "—"
 	}
-	return fmt.Sprintf("%s  %s  %s  %s  @  %s%s\n%s\n%s",
-		a.Name, side, outcome, formatUSD(a.USDC), formatCents(a.Price), fills,
+	return fmt.Sprintf("%s %s %s %s @ %s\n%s",
+		a.Name, side, outcome, formatShares(a.Size), formatCents(a.Price),
 		title,
-		marketURL(a),
 	)
 }
 
-func marketURL(a Alert) string {
-	switch {
-	case a.EventSlug != "" && a.Slug != "":
-		return "https://polymarket.com/event/" + a.EventSlug + "/" + a.Slug
-	case a.EventSlug != "":
-		return "https://polymarket.com/event/" + a.EventSlug
-	case a.Slug != "":
-		return "https://polymarket.com/market/" + a.Slug
-	case a.Wallet != "":
-		return "https://polymarket.com/profile/" + a.Wallet
-	default:
-		return "https://polymarket.com"
+// formatShares is Activity-tab style: 1.4k / 32k above 1000, else a short raw count.
+func formatShares(n float64) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
 	}
+	if n >= 1000 {
+		k := math.Round(n/100) / 10 // one decimal of thousands
+		if k == math.Trunc(k) {
+			return fmt.Sprintf("%s%.0fk", sign, k)
+		}
+		return fmt.Sprintf("%s%.1fk", sign, k)
+	}
+	if n >= 10 {
+		return fmt.Sprintf("%s%.0f", sign, n)
+	}
+	return fmt.Sprintf("%s%.1f", sign, n)
 }
 
 func formatUSD(n float64) string {
@@ -340,5 +381,5 @@ func formatUSD(n float64) string {
 }
 
 func formatCents(p float64) string {
-	return fmt.Sprintf("%.0f¢", p*100)
+	return fmt.Sprintf("%.0fc", p*100)
 }
