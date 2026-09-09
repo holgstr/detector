@@ -175,7 +175,7 @@ func TestFormat(t *testing.T) {
 		EventSlug: "sweden-event",
 		Parts:     3,
 	})
-	want := "SnowLover7  BUY  Over\n$382  @  60¢ (3 fills)\nSweden Parliamentary Election: V Over/Under 7%?\nhttps://polymarket.com/event/sweden-event/sweden-v"
+	want := "SnowLover7  BUY  Over  $382  @  60¢ (3 fills)\nSweden Parliamentary Election: V Over/Under 7%?\nhttps://polymarket.com/event/sweden-event/sweden-v"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}

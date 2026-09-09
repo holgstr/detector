@@ -299,9 +299,8 @@ func Format(a Alert) string {
 	if title == "" {
 		title = "—"
 	}
-	return fmt.Sprintf("%s  %s  %s\n%s  @  %s%s\n%s\n%s",
-		a.Name, side, outcome,
-		formatUSD(a.USDC), formatCents(a.Price), fills,
+	return fmt.Sprintf("%s  %s  %s  %s  @  %s%s\n%s\n%s",
+		a.Name, side, outcome, formatUSD(a.USDC), formatCents(a.Price), fills,
 		title,
 		marketURL(a),
 	)
