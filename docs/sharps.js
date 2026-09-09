@@ -28,7 +28,7 @@
   const $ = (id) => document.getElementById(id);
 
   const WALLET_CONCURRENCY = 6;
-  const CACHE_PORT = "detector.port.v1";
+  const CACHE_PORT = "detector.port.v2";
   const CACHE_ACT = "detector.act.v1";
   const CACHE_TTL_MS = 120_000;
   const CACHE_STALE_MS = 600_000;
@@ -389,13 +389,101 @@
     return Array.isArray(trades) ? trades : [];
   }
 
+  function parseOutcomeSide(outcome) {
+    const o = String(outcome || "").trim().toLowerCase();
+    if (o === "yes") return "yes";
+    if (o === "no") return "no";
+    return null;
+  }
+
+  /** Net Yes/No legs per wallet per market; non-binary outcomes pass through unchanged. */
+  function netWalletPositions(positions) {
+    /** @type {Map<string, {yes: object|null, no: object|null, meta: object}>} */
+    const binary = new Map();
+    /** @type {object[]} */
+    const other = [];
+
+    for (const p of positions) {
+      const side = parseOutcomeSide(p.outcome);
+      const cid = p.conditionId || "";
+      if (!side) {
+        const size = Number(p.size) || 0;
+        other.push({
+          conditionId: cid,
+          asset: p.asset,
+          title: p.title || p.slug || "—",
+          slug: p.slug,
+          eventSlug: p.eventSlug,
+          outcome: p.outcome || "—",
+          icon: p.icon || "",
+          size,
+          currentValue: Number(p.currentValue) || 0,
+          initialValue: Number(p.initialValue) || 0,
+          cashPnl: Number(p.cashPnl) || 0,
+          avgPrice: Number(p.avgPrice) || 0,
+          curPrice: Number(p.curPrice) || 0,
+          signedNet: size,
+        });
+        continue;
+      }
+      let m = binary.get(cid);
+      if (!m) {
+        m = { yes: null, no: null, meta: p };
+        binary.set(cid, m);
+      }
+      if (side === "yes") m.yes = p;
+      else m.no = p;
+    }
+
+    /** @type {object[]} */
+    const netted = [];
+    for (const [cid, m] of binary) {
+      const yesSize = Number(m.yes?.size) || 0;
+      const noSize = Number(m.no?.size) || 0;
+      const netShares = yesSize - noSize;
+      if (netShares === 0) continue;
+
+      const longYes = netShares > 0;
+      const sidePos = longYes ? m.yes : m.no;
+      const size = Math.abs(netShares);
+      const curPrice = Number(sidePos?.curPrice) || 0;
+      const yesAvg = Number(m.yes?.avgPrice) || 0;
+      const noAvg = Number(m.no?.avgPrice) || 0;
+      let avgPrice = Number(sidePos?.avgPrice) || 0;
+      if (yesSize > 0 && noSize > 0) {
+        avgPrice = longYes
+          ? (yesSize * yesAvg - noSize * noAvg) / netShares
+          : (noSize * noAvg - yesSize * yesAvg) / size;
+      }
+
+      netted.push({
+        conditionId: cid,
+        asset: sidePos?.asset,
+        title: m.meta.title || m.meta.slug || "—",
+        slug: m.meta.slug,
+        eventSlug: m.meta.eventSlug,
+        outcome: longYes ? "Yes" : "No",
+        icon: m.meta.icon || "",
+        size,
+        currentValue: size * curPrice,
+        initialValue: (Number(m.yes?.initialValue) || 0) + (Number(m.no?.initialValue) || 0),
+        cashPnl: (Number(m.yes?.cashPnl) || 0) + (Number(m.no?.cashPnl) || 0),
+        avgPrice,
+        curPrice,
+        signedNet: netShares,
+      });
+    }
+    return [...netted, ...other];
+  }
+
   function aggregatePositions(rawByWallet) {
     /** @type {Map<string, object>} */
     const map = new Map();
     for (const [wallet, positions] of rawByWallet) {
       const prof = profiles.get(wallet.toLowerCase());
-      for (const p of positions) {
-        const key = `${p.conditionId || ""}|${p.asset || p.outcome || ""}`;
+      for (const p of netWalletPositions(positions)) {
+        const isBinary = parseOutcomeSide(p.outcome) != null;
+        const key = isBinary ? (p.conditionId || "") : `${p.conditionId || ""}|${p.asset || p.outcome || ""}`;
         let row = map.get(key);
         if (!row) {
           row = {
@@ -405,14 +493,15 @@
             title: p.title || p.slug || "—",
             slug: p.slug,
             eventSlug: p.eventSlug,
-            outcome: p.outcome || "—",
+            outcome: "—",
             icon: p.icon || "",
             size: 0,
             currentValue: 0,
             initialValue: 0,
             cashPnl: 0,
             avgPrice: 0,
-            curPrice: Number(p.curPrice) || 0,
+            curPrice: 0,
+            signedNet: 0,
             holders: [],
           };
           map.set(key, row);
@@ -422,17 +511,18 @@
         const init = Number(p.initialValue) || 0;
         const pnl = Number(p.cashPnl) || 0;
         const avg = Number(p.avgPrice) || 0;
-        const prevSize = row.size;
-        row.size += size;
+        const signed = Number(p.signedNet) || (parseOutcomeSide(p.outcome) === "no" ? -size : size);
+        row.signedNet += signed;
         row.currentValue += cur;
         row.initialValue += init;
         row.cashPnl += pnl;
-        row.avgPrice = row.size > 0 ? ((prevSize * row.avgPrice) + (size * avg)) / row.size : avg;
         if (Number(p.curPrice) > 0) row.curPrice = Number(p.curPrice);
         row.holders.push({
           wallet,
           name: prof?.name || fmtWallet(wallet),
+          outcome: p.outcome || "—",
           size,
+          signedNet: signed,
           currentValue: cur,
           cashPnl: pnl,
           avgPrice: avg,
@@ -441,6 +531,26 @@
       }
     }
     for (const row of map.values()) {
+      const sn = row.signedNet || 0;
+      if (sn > 0) {
+        row.outcome = "Yes";
+        row.size = sn;
+      } else if (sn < 0) {
+        row.outcome = "No";
+        row.size = Math.abs(sn);
+      } else {
+        row.outcome = "—";
+        row.size = 0;
+      }
+      const side = row.outcome;
+      if (side !== "—") {
+        const sideHolders = row.holders.filter((h) => h.outcome === side && h.curPrice > 0);
+        if (sideHolders.length) row.curPrice = sideHolders[0].curPrice;
+      }
+      const absTotal = row.holders.reduce((s, h) => s + (h.size || 0), 0);
+      row.avgPrice = absTotal > 0
+        ? row.holders.reduce((s, h) => s + (h.avgPrice || 0) * (h.size || 0), 0) / absTotal
+        : 0;
       row.holders.sort((a, b) => b.currentValue - a.currentValue);
     }
     return [...map.values()];
@@ -518,7 +628,7 @@
         `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="trader"><a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer">${shortName(h.name, 22)}</a></td>` +
         `<td class="num">${fmtUsd(h.currentValue)}</td>` +
-        `<td class="num">${fmtShares(h.size)}${mobilePriceHtml(h.curPrice, "Now")}</td>` +
+        `<td class="num">${outcomeBadge(h.outcome)} ${fmtShares(h.size)}${mobilePriceHtml(h.curPrice, "Now")}</td>` +
         `<td class="num hide-sm">${fmtCts(h.avgPrice)} / ${fmtCts(h.curPrice)}</td>` +
         `<td class="num ${pnlCls}">${fmtUsd(h.cashPnl)}</td>` +
         `</tr>`;
@@ -540,7 +650,7 @@
       `<th class="expand-h" aria-hidden="true"></th>` +
       `<th>Sharp</th>` +
       `<th class="num">Value</th>` +
-      `<th class="num">Shares</th>` +
+      `<th class="num">Net</th>` +
       `<th class="num hide-sm">Avg / Now</th>` +
       `<th class="num">PnL</th>` +
       `</tr></thead>` +
@@ -583,14 +693,17 @@
       tr.dataset.portKey = r.key;
       tr.tabIndex = 0;
       const sharps = r.holders
-        .map((h) => `<a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer" title="${fmtUsd(h.currentValue)}">${shortName(h.name, 18)}</a>`)
+        .map((h) => {
+          const side = outcomeBadge(h.outcome);
+          return `<a href="https://polymarket.com/profile/${h.wallet}" target="_blank" rel="noopener noreferrer" title="${fmtUsd(h.currentValue)} · ${h.outcome} ${fmtShares(h.size)}">${side} ${shortName(h.name, 16)}</a>`;
+        })
         .join(", ");
       const pnlCls = (r.cashPnl || 0) >= 0 ? "trade-buy" : "trade-sell";
       tr.innerHTML =
         `<td class="expand"><span class="chev" aria-hidden="true"></span></td>` +
         `<td class="num">${fmtUsd(r.currentValue)}</td>` +
         `<td class="market">${marketCellHtml(r, "", r.curPrice, "Now")}</td>` +
-        `<td class="num">${fmtShares(r.size)}</td>` +
+        `<td class="num">${outcomeBadge(r.outcome)} ${fmtShares(r.size)}</td>` +
         `<td class="num hide-sm">${fmtCts(r.avgPrice)} / ${fmtCts(r.curPrice)}</td>` +
         `<td class="num ${pnlCls}">${fmtUsd(r.cashPnl)}</td>` +
         `<td class="sharps-cell">${sharps}</td>`;
