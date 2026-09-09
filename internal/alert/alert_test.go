@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/holgstr/detector/internal/polymarket"
@@ -213,6 +214,74 @@ func TestFormat(t *testing.T) {
 	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestFormatIncludesNetPosition(t *testing.T) {
+	got := Format(Alert{
+		Name:            "SnowLover7",
+		Side:            "BUY",
+		Outcome:         "No",
+		Size:            32000,
+		Price:           0.32,
+		Title:           "Fed decision in September?",
+		HasPosition:     true,
+		PositionSize:    27500,
+		PositionOutcome: "YES",
+	})
+	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?\nPosition: 27.5k YES"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	flat := Format(Alert{
+		Name:        "A",
+		Side:        "SELL",
+		Outcome:     "Yes",
+		Size:        10,
+		Price:       0.5,
+		Title:       "M",
+		HasPosition: true,
+	})
+	if !strings.HasSuffix(flat, "\nPosition: 0") {
+		t.Fatalf("flat=%q", flat)
+	}
+}
+
+type fakePositions map[string][]polymarket.Position
+
+func (f fakePositions) FetchPositions(_ context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	key := strings.ToLower(opt.User) + "|" + opt.Market
+	if pos, ok := f[key]; ok {
+		return pos, nil
+	}
+	return nil, errors.New("missing")
+}
+
+func TestAttachNetPositions(t *testing.T) {
+	alerts := []Alert{
+		{Wallet: "0xAAA", ConditionID: "0xabc", Name: "A"},
+		{Wallet: "0xaaa", ConditionID: "0xabc", Name: "A2"},
+		{Wallet: "0xbbb", ConditionID: "0xdef", Name: "B"},
+		{Wallet: "", ConditionID: "0xabc", Name: "skip"},
+	}
+	api := fakePositions{
+		"0xaaa|0xabc": {
+			{Outcome: "Yes", Size: 100000},
+			{Outcome: "No", Size: 72500},
+		},
+	}
+	AttachNetPositions(context.Background(), api, alerts)
+	if !alerts[0].HasPosition || alerts[0].PositionSize != 27500 || alerts[0].PositionOutcome != "YES" {
+		t.Fatalf("first=%+v", alerts[0])
+	}
+	if alerts[1].PositionSize != 27500 {
+		t.Fatalf("cache miss on second: %+v", alerts[1])
+	}
+	if alerts[2].HasPosition {
+		t.Fatal("failed lookup should omit Position")
+	}
+	if alerts[3].HasPosition {
+		t.Fatal("empty wallet should skip")
 	}
 }
 
