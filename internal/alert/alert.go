@@ -60,10 +60,18 @@ type Alert struct {
 	Timestamp   int64
 	Parts       int
 	Keys        []string
+	// Net position after the fill (YES minus NO, or a non-binary outcome).
+	HasPosition     bool
+	PositionSize    float64
+	PositionOutcome string
 }
 
 type sportsLookup interface {
 	EventIsSports(ctx context.Context, eventSlug string) (bool, error)
+}
+
+type positionLookup interface {
+	FetchPositions(ctx context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error)
 }
 
 // LoadState reads a checkpoint, or returns an empty one if the file is missing.
@@ -318,6 +326,7 @@ func displayName(a polymarket.Activity) string {
 //
 //	Name BUY 32k NO @ 32c
 //	Market Name
+//	Position: 27.5k YES
 func Format(a Alert) string {
 	side := a.Side
 	if side == "" {
@@ -336,10 +345,64 @@ func Format(a Alert) string {
 	if title == "" {
 		title = "—"
 	}
-	return fmt.Sprintf("%s %s %s %s @ %s\n%s",
+	body := fmt.Sprintf("%s %s %s %s @ %s\n%s",
 		a.Name, side, formatShares(a.Size), outcome, formatCents(a.Price),
 		title,
 	)
+	if a.HasPosition {
+		body += "\n" + formatPosition(a.PositionSize, a.PositionOutcome)
+	}
+	return body
+}
+
+func formatPosition(size float64, outcome string) string {
+	if size == 0 || strings.TrimSpace(outcome) == "" {
+		return "Position: 0"
+	}
+	return fmt.Sprintf("Position: %s %s", formatShares(size), strings.ToUpper(strings.TrimSpace(outcome)))
+}
+
+// AttachNetPositions fills each alert's net Yes/No (or other) holding for
+// that wallet+market. Lookup failures leave HasPosition false so the trade
+// line still goes out without a Position row.
+func AttachNetPositions(ctx context.Context, api positionLookup, alerts []Alert) {
+	if api == nil || len(alerts) == 0 {
+		return
+	}
+	type key struct{ wallet, market string }
+	cache := make(map[key]polymarket.NetPosition)
+	failed := make(map[key]struct{})
+	for i := range alerts {
+		k := key{
+			wallet: strings.ToLower(strings.TrimSpace(alerts[i].Wallet)),
+			market: strings.TrimSpace(alerts[i].ConditionID),
+		}
+		if k.wallet == "" || k.market == "" {
+			continue
+		}
+		if _, ok := failed[k]; ok {
+			continue
+		}
+		np, ok := cache[k]
+		if !ok {
+			pos, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{
+				User:   k.wallet,
+				Market: k.market,
+			})
+			if err != nil {
+				failed[k] = struct{}{}
+				continue
+			}
+			np = polymarket.NetShares(pos)
+			cache[k] = np
+		}
+		if !np.Known {
+			continue
+		}
+		alerts[i].HasPosition = true
+		alerts[i].PositionSize = np.Size
+		alerts[i].PositionOutcome = np.Outcome
+	}
 }
 
 // formatShares is Activity-tab style: 1.4k / 32k above 1000, else a short raw count.

@@ -182,6 +182,8 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 		return nil
 	}
 
+	alert.AttachNetPositions(ctx, api, alerts)
+
 	sent := 0
 	for _, a := range alerts {
 		text := alert.Format(a)
