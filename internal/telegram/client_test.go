@@ -10,6 +10,29 @@ import (
 	"testing"
 )
 
+func TestGetMe(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/getMe") {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":     true,
+			"result": map[string]any{"id": 1, "username": "detector_bot", "first_name": "Detector"},
+		})
+	}))
+	t.Cleanup(ts.Close)
+	c := New("TEST")
+	c.Base = ts.URL
+	c.HTTP = ts.Client()
+	me, err := c.GetMe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.Username != "detector_bot" {
+		t.Fatalf("%+v", me)
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotBody []byte
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

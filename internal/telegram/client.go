@@ -64,6 +64,15 @@ type sendReq struct {
 	DisableWebPagePreview bool   `json:"disable_web_page_preview"`
 }
 
+// GetMe checks the token and returns the bot's identity.
+func (c *Client) GetMe(ctx context.Context) (User, error) {
+	var me User
+	if err := c.do(ctx, "getMe", nil, "", &me); err != nil {
+		return User{}, err
+	}
+	return me, nil
+}
+
 // SendMessage posts a plain-text DM.
 func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
 	body, err := json.Marshal(sendReq{

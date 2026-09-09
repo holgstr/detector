@@ -66,8 +66,19 @@ func main() {
 			log.Fatal("set TELEGRAM_BOT_TOKEN (or pass -token), or use -dry-run")
 		}
 		tg = telegram.New(*token)
+		me, err := tg.GetMe(ctx)
+		if err != nil {
+			log.Fatalf("telegram token rejected: %v", err)
+		}
+		if me.Username != "" {
+			log.Printf("bot @%s  https://t.me/%s", me.Username, me.Username)
+		}
 		if state.ChatID == 0 {
-			log.Print("waiting for /start in Telegram…")
+			if me.Username != "" {
+				log.Printf("waiting for /start — open https://t.me/%s and send any message", me.Username)
+			} else {
+				log.Print("waiting for /start in Telegram…")
+			}
 			if err := waitForChat(ctx, tg, state, *statePath); err != nil {
 				log.Fatalf("telegram: %v", err)
 			}
