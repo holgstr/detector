@@ -7,9 +7,8 @@
 //  4. Open the bot in Telegram and send /start
 //
 // Optional: TELEGRAM_CHAT_ID if you already know it.
-// First poll is quiet (seeds the checkpoint). After that, each new
-// non-sports TRADE from a tracked wallet is one message, with consecutive
-// same-market fills collapsed.
+// Chat: /minsize 100 — same floor as the Activity tab "Min size $".
+// Same-market same-direction fills are aggregated first, then the floor applies.
 package main
 
 import (
@@ -21,6 +20,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +33,7 @@ import (
 func main() {
 	interval := flag.Duration("interval", 20*time.Second, "Poll interval")
 	statePath := flag.String("state", "data/activity-bot-state.json", "Checkpoint path (seen fills + chat id)")
-	minUSD := flag.Float64("min-usd", 0, "Ignore fills below this USDC notional")
+	minUSD := flag.Float64("min-usd", 100, "Default min USDC (overridden by /minsize in chat)")
 	limit := flag.Int("limit", 100, "Activity rows to fetch per wallet (max 500)")
 	token := flag.String("token", os.Getenv("TELEGRAM_BOT_TOKEN"), "Bot token (or TELEGRAM_BOT_TOKEN)")
 	chat := flag.String("chat", os.Getenv("TELEGRAM_CHAT_ID"), "Chat id (or TELEGRAM_CHAT_ID); otherwise send /start")
@@ -60,6 +60,12 @@ func main() {
 		state.Seen = map[string]int64{}
 	}
 
+	b := &bot{
+		state:       state,
+		path:        *statePath,
+		fallbackMin: *minUSD,
+	}
+
 	var tg *telegram.Client
 	if !*dryRun {
 		if strings.TrimSpace(*token) == "" {
@@ -79,18 +85,19 @@ func main() {
 			} else {
 				log.Print("waiting for /start in Telegram…")
 			}
-			if err := waitForChat(ctx, tg, state, *statePath); err != nil {
-				log.Fatalf("telegram: %v", err)
-			}
 		}
-		log.Print("chat bound")
+		go listenChat(ctx, tg, b)
+		if err := b.waitBound(ctx); err != nil {
+			log.Fatalf("telegram: %v", err)
+		}
+		log.Printf("chat bound; min size %s", formatMin(b.minUSD()))
 	}
 
 	client := polymarket.NewClient()
 	client.Workers = 6
 
 	poll := func() error {
-		return runPoll(ctx, client, tg, state, *statePath, *minUSD, *limit, *dryRun)
+		return runPoll(ctx, client, tg, b, *limit, *dryRun)
 	}
 
 	for {
@@ -109,7 +116,36 @@ func main() {
 	}
 }
 
-func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, state *alert.State, statePath string, minUSD float64, limit int, dryRun bool) error {
+type bot struct {
+	mu          sync.Mutex
+	state       *alert.State
+	path        string
+	fallbackMin float64
+}
+
+func (b *bot) minUSD() float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state.EffectiveMinUSD(b.fallbackMin)
+}
+
+func (b *bot) waitBound(ctx context.Context) error {
+	for {
+		b.mu.Lock()
+		id := b.state.ChatID
+		b.mu.Unlock()
+		if id != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b *bot, limit int, dryRun bool) error {
 	acts, err := api.FetchActivityBatch(ctx, sharps.Addresses(), polymarket.FetchActivityOptions{
 		Limit: limit,
 		Type:  "TRADE",
@@ -121,75 +157,137 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, s
 		log.Printf("activity fetch (partial): %v", err)
 	}
 
-	plan, err := alert.BuildPlan(ctx, api, state, acts, minUSD)
+	b.mu.Lock()
+	minUSD := b.state.EffectiveMinUSD(b.fallbackMin)
+	plan, err := alert.BuildPlan(ctx, api, b.state, acts, minUSD)
 	if err != nil {
+		b.mu.Unlock()
 		return err
 	}
-	state.CommitDropped(plan)
-	defer func() {
-		if err := alert.SaveState(statePath, state); err != nil {
-			log.Printf("save state: %v", err)
-		}
-	}()
-
+	b.state.CommitDropped(plan)
+	chatID := b.state.ChatID
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
 	if plan.FirstRun {
-		log.Printf("seeded %d fills; waiting for new non-sports trades", len(state.Seen))
+		n := len(b.state.Seen)
+		b.mu.Unlock()
+		log.Printf("seeded %d fills; waiting for new non-sports trades", n)
 		return nil
 	}
-	if len(plan.Alerts) == 0 {
+	alerts := plan.Alerts
+	b.mu.Unlock()
+
+	if len(alerts) == 0 {
 		return nil
 	}
 
 	sent := 0
-	for _, a := range plan.Alerts {
+	for _, a := range alerts {
 		text := alert.Format(a)
 		if dryRun {
 			fmt.Println(text)
 			fmt.Println("---")
-			state.CommitSent(a)
-			sent++
-			continue
-		}
-		if err := tg.SendMessage(ctx, state.ChatID, text); err != nil {
+		} else if err := tg.SendMessage(ctx, chatID, text); err != nil {
 			log.Printf("send %s: %v", a.Name, err)
 			continue
 		}
-		state.CommitSent(a)
+		b.mu.Lock()
+		b.state.CommitSent(a)
+		if err := alert.SaveState(b.path, b.state); err != nil {
+			log.Printf("save state: %v", err)
+		}
+		b.mu.Unlock()
 		sent++
 	}
-	log.Printf("sent %d/%d alerts", sent, len(plan.Alerts))
+	log.Printf("sent %d/%d alerts", sent, len(alerts))
 	return nil
 }
 
-func waitForChat(ctx context.Context, tg *telegram.Client, state *alert.State, statePath string) error {
+func listenChat(ctx context.Context, tg *telegram.Client, b *bot) {
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return
 		}
-		updates, err := tg.GetUpdates(ctx, state.TelegramOffset, 25)
+		b.mu.Lock()
+		offset := b.state.TelegramOffset
+		b.mu.Unlock()
+
+		updates, err := tg.GetUpdates(ctx, offset, 25)
 		if err != nil {
 			log.Printf("getUpdates: %v", err)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return
 			case <-time.After(5 * time.Second):
 			}
 			continue
 		}
 		for _, u := range updates {
-			state.TelegramOffset = u.UpdateID + 1
-			if u.Message == nil || u.Message.Chat.ID == 0 {
-				continue
-			}
-			state.ChatID = u.Message.Chat.ID
-			hello := fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.", len(sharps.Tracked))
-			if err := tg.SendMessage(ctx, state.ChatID, hello); err != nil {
-				log.Printf("welcome: %v", err)
-			}
-			if err := alert.SaveState(statePath, state); err != nil {
-				return err
-			}
-			return nil
+			handleUpdate(ctx, tg, b, u)
 		}
 	}
+}
+
+func handleUpdate(ctx context.Context, tg *telegram.Client, b *bot, u telegram.Update) {
+	b.mu.Lock()
+	b.state.TelegramOffset = u.UpdateID + 1
+	if u.Message == nil || u.Message.Chat.ID == 0 {
+		_ = alert.SaveState(b.path, b.state)
+		b.mu.Unlock()
+		return
+	}
+
+	first := false
+	if b.state.ChatID == 0 {
+		b.state.ChatID = u.Message.Chat.ID
+		first = true
+	}
+	if u.Message.Chat.ID != b.state.ChatID {
+		_ = alert.SaveState(b.path, b.state)
+		b.mu.Unlock()
+		return
+	}
+
+	cmd := alert.ParseCommand(u.Message.Text)
+	min := b.state.EffectiveMinUSD(b.fallbackMin)
+	if cmd.Cmd == alert.CmdMinSizeSet {
+		b.state.SetMinUSD(cmd.MinUSD)
+		min = cmd.MinUSD
+		log.Printf("min size set to %s", formatMin(min))
+	}
+	chatID := b.state.ChatID
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	b.mu.Unlock()
+
+	var replies []string
+	if first || cmd.Cmd == alert.CmdStart {
+		replies = append(replies, welcome(min))
+	} else {
+		switch cmd.Cmd {
+		case alert.CmdMinSizeShow, alert.CmdMinSizeSet:
+			replies = append(replies, alert.MinSizeStatus(min))
+		case alert.CmdHelp:
+			replies = append(replies, alert.HelpText(min))
+		}
+	}
+	for _, text := range replies {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+}
+
+func welcome(minUSD float64) string {
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/help for commands.",
+		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
+}
+
+func formatMin(n float64) string {
+	if n <= 0 {
+		return "off"
+	}
+	return fmt.Sprintf("$%.0f", n)
 }
