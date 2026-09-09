@@ -23,6 +23,8 @@
     { wallet: "0xd24b95551eb288ff82bb625dcd7f32f62abdef76", name: "BiDiFakePolls" },
     { wallet: "0x8a4c788f043023b8b28a762216d037e9f148532b", name: "occasionalAwareness" },
     { wallet: "0x448861155279dbf833d041b963e3ac854599e319", name: "Flipadelphia" },
+    { wallet: "0xf1f9a438f2697381b4ac8eb283d6f4dd772d1245", name: "tunatyler" },
+    { wallet: "0xa43da0aab839cf651a70e0e310462bb53a3b00f4", name: "Wforkf" },
   ];
 
   const $ = (id) => document.getElementById(id);
