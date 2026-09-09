@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -102,5 +103,16 @@ func TestAPIError(t *testing.T) {
 	c.HTTP = ts.Client()
 	if err := c.SendMessage(context.Background(), 1, "x"); err == nil || !strings.Contains(err.Error(), "Unauthorized") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestScrubToken(t *testing.T) {
+	c := New("secret-token-value")
+	err := c.scrub(fmt.Errorf("Get \"https://api.telegram.org/botsecret-token-value/getUpdates\": timeout"))
+	if err == nil || strings.Contains(err.Error(), "secret-token-value") {
+		t.Fatalf("leaked: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("got %v", err)
 	}
 }

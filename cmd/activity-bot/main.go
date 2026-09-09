@@ -83,7 +83,7 @@ func main() {
 				log.Fatalf("telegram: %v", err)
 			}
 		}
-		log.Printf("chat id %d", state.ChatID)
+		log.Print("chat bound")
 	}
 
 	client := polymarket.NewClient()

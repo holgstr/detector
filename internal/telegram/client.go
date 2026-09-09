@@ -25,7 +25,7 @@ type Client struct {
 func New(token string) *Client {
 	return &Client{
 		Token: strings.TrimSpace(token),
-		HTTP:  &http.Client{Timeout: 45 * time.Second},
+		HTTP:  &http.Client{Timeout: 90 * time.Second},
 		Base:  apiBase,
 	}
 }
@@ -137,7 +137,7 @@ func (c *Client) do(ctx context.Context, method string, body io.Reader, contentT
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return c.scrub(err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -162,4 +162,18 @@ func (c *Client) do(ctx context.Context, method string, body io.Reader, contentT
 		return fmt.Errorf("telegram result %s: %w", method, err)
 	}
 	return nil
+}
+
+func (c *Client) scrub(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if tok := c.Token; tok != "" && strings.Contains(msg, tok) {
+		msg = strings.ReplaceAll(msg, tok, "REDACTED")
+	}
+	if msg == err.Error() {
+		return err
+	}
+	return fmt.Errorf("%s", msg)
 }

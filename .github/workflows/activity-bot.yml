@@ -1,0 +1,66 @@
+# Keep detectx_bot polling while this repo lives on GitHub.
+# GitHub Pages only serves the UI; this worker is the always-on process.
+#
+# One-time: repo Settings → Secrets and variables → Actions
+#   TELEGRAM_BOT_TOKEN   (required)
+#   TELEGRAM_CHAT_ID     (optional; set after the first /start so restarts skip wait)
+#
+# Then merge to main (schedule only runs on the default branch) and send
+# /start to https://t.me/detectx_bot while a run is in progress.
+#
+# Jobs last ~6h (runner cap). The next schedule overlaps so the bot
+# restarts with only a short gap. State (chat id + seen fills) is cached.
+
+name: Activity bot
+
+on:
+  schedule:
+    # Every 5h55m — inside the 6h job limit, with overlap from concurrency.
+    - cron: "5 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: activity-bot
+  cancel-in-progress: true
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Restore checkpoint
+        uses: actions/cache@v4
+        with:
+          path: data/activity-bot-state.json
+          key: activity-bot-state-v1
+          restore-keys: |
+            activity-bot-state-v1
+
+      - name: Run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "Set repo secret TELEGRAM_BOT_TOKEN" >&2
+            exit 1
+          fi
+          mkdir -p data
+          go build -o /tmp/activity-bot ./cmd/activity-bot
+          while true; do
+            /tmp/activity-bot -state data/activity-bot-state.json || true
+            echo "bot exited, restarting in 5s" >&2
+            sleep 5
+          done
