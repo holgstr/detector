@@ -7,7 +7,8 @@
   const PORT_COLS = 7;
   const ACT_COLS = 8;
 
-  /** Add wallets here — names resolve from Polymarket leaderboard when possible. */
+  /** Add wallets here — names resolve from Polymarket leaderboard when possible.
+   *  Keep in sync with internal/sharps/tracked.go (activity Telegram bot). */
   /** @type {Array<{wallet:string, name?:string}>} */
   const TRACKED = [
     { wallet: "0x23d81ba9371e576015c1e562db09c689f56b0288", name: "flawfence" },

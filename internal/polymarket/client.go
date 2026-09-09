@@ -22,6 +22,9 @@ const (
 type Client struct {
 	HTTP    *http.Client
 	Workers int
+
+	eventMu    sync.Mutex
+	eventCache map[string]EventMeta
 }
 
 func NewClient() *Client {
@@ -34,7 +37,8 @@ func NewClient() *Client {
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
-		Workers: 16,
+		Workers:    16,
+		eventCache: make(map[string]EventMeta),
 	}
 }
 
