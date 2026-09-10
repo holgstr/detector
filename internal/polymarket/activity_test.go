@@ -38,6 +38,7 @@ func TestFetchActivityQuery(t *testing.T) {
 		User:  "0xAAA",
 		Limit: 50,
 		Type:  "TRADE",
+		Start: 1_700_000_000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +46,8 @@ func TestFetchActivityQuery(t *testing.T) {
 	if len(acts) != 1 {
 		t.Fatalf("got %d", len(acts))
 	}
-	if got.Get("user") != "0xAAA" || got.Get("type") != "TRADE" || got.Get("limit") != "50" {
+	if got.Get("user") != "0xAAA" || got.Get("type") != "TRADE" || got.Get("limit") != "50" ||
+		got.Get("start") != "1700000000" {
 		t.Fatalf("query=%s", got.Encode())
 	}
 }
@@ -79,5 +81,46 @@ func TestFetchActivityBatch(t *testing.T) {
 	}
 	if len(acts) != 2 {
 		t.Fatalf("got %d", len(acts))
+	}
+}
+
+func TestFetchActivitySincePagesUntilWindow(t *testing.T) {
+	var offsets []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offsets = append(offsets, r.URL.Query().Get("offset"))
+		if r.URL.Query().Get("start") != "100" || r.URL.Query().Get("type") != "TRADE" {
+			t.Errorf("query=%s", r.URL.RawQuery)
+		}
+		off := r.URL.Query().Get("offset")
+		if off == "0" {
+			page := make([]Activity, 500)
+			for i := range page {
+				page[i] = Activity{ProxyWallet: "0x1", Timestamp: 200, Size: 1, TransactionHash: "a", Asset: "t"}
+			}
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]Activity{
+			{ProxyWallet: "0x1", Timestamp: 50, Size: 1, TransactionHash: "old", Asset: "t"},
+		})
+	}))
+	t.Cleanup(ts.Close)
+
+	c := NewClient()
+	c.HTTP = ts.Client()
+	c.HTTP.Transport = rewriteHost(ts.URL)
+
+	acts, trunc, err := c.FetchActivitySince(context.Background(), "0x1", 100, "TRADE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trunc {
+		t.Fatal("should finish at old page")
+	}
+	if len(acts) != 500 {
+		t.Fatalf("kept %d (old row dropped)", len(acts))
+	}
+	if len(offsets) != 2 || offsets[1] != "500" {
+		t.Fatalf("offsets=%v", offsets)
 	}
 }

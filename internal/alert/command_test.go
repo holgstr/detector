@@ -1,6 +1,9 @@
 package alert
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseCommand(t *testing.T) {
 	if ParseCommand("/start").Cmd != CmdStart {
@@ -29,6 +32,30 @@ func TestParseCommand(t *testing.T) {
 	}
 	if ParseCommand("/minsize nope").Cmd != CmdHelp {
 		t.Fatal("bad amount → help")
+	}
+
+	got = ParseCommand("/net")
+	if got.Cmd != CmdNet || got.Window != 24*time.Hour || got.Trader != "" {
+		t.Fatalf("net default %+v", got)
+	}
+	got = ParseCommand("/net 6h SnowLover7")
+	if got.Cmd != CmdNet || got.Window != 6*time.Hour || got.Trader != "SnowLover7" {
+		t.Fatalf("%+v", got)
+	}
+	got = ParseCommand("/delta SnowLover7 12")
+	if got.Cmd != CmdNet || got.Window != 12*time.Hour || got.Trader != "SnowLover7" {
+		t.Fatalf("%+v", got)
+	}
+	got = ParseCommand("/net 1d")
+	if got.Cmd != CmdNet || got.Window != 24*time.Hour {
+		t.Fatalf("%+v", got)
+	}
+	got = ParseCommand("/net all")
+	if got.Cmd != CmdNet || got.Trader != "" {
+		t.Fatalf("all %+v", got)
+	}
+	if ParseCommand("/net 6h 12h").Cmd != CmdHelp {
+		t.Fatal("two windows → help")
 	}
 }
 

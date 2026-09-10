@@ -1,6 +1,8 @@
 package sharps
 
-import "strings"
+import (
+	"strings"
+)
 
 // Wallet is a tracked sharp from the detector activity/portfolio tabs.
 type Wallet struct {
@@ -46,4 +48,31 @@ func NameOf(wallet string) string {
 		}
 	}
 	return ""
+}
+
+// Lookup finds tracked wallets by display name or address prefix.
+// A unique exact (case-insensitive) name or full address wins first.
+func Lookup(query string) []Wallet {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return append([]Wallet(nil), Tracked...)
+	}
+	ql := strings.ToLower(q)
+	var exact, prefix []Wallet
+	for _, w := range Tracked {
+		name := strings.ToLower(w.Name)
+		addr := strings.ToLower(w.Address)
+		if name == ql || addr == ql {
+			exact = append(exact, w)
+			continue
+		}
+		if strings.HasPrefix(name, ql) || strings.HasPrefix(addr, ql) ||
+			strings.Contains(name, ql) {
+			prefix = append(prefix, w)
+		}
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	return prefix
 }

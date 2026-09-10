@@ -9,7 +9,11 @@ import (
 	"sync"
 )
 
-const defaultActivityLimit = 100
+const (
+	defaultActivityLimit = 100
+	maxActivityOffset    = 10000
+	maxActivityPages     = 20
+)
 
 // Activity is one Data API /activity row (trades, splits, etc.).
 type Activity struct {
@@ -39,6 +43,7 @@ type FetchActivityOptions struct {
 	Limit  int // default 100, max 500
 	Offset int
 	Type   string // e.g. "TRADE"; empty = all types
+	Start  int64  // epoch seconds, inclusive lower bound (0 = API default window)
 }
 
 // ActivityKey uniquely identifies a fill so we can skip repeats.
@@ -67,6 +72,9 @@ func (c *Client) FetchActivity(ctx context.Context, opt FetchActivityOptions) ([
 	q.Set("offset", strconv.Itoa(opt.Offset))
 	if t := strings.TrimSpace(opt.Type); t != "" {
 		q.Set("type", t)
+	}
+	if opt.Start > 0 {
+		q.Set("start", strconv.FormatInt(opt.Start, 10))
 	}
 
 	var out []Activity
@@ -138,4 +146,117 @@ func (c *Client) FetchActivityBatch(ctx context.Context, users []string, opt Fet
 		return out, firstErr
 	}
 	return out, nil
+}
+
+// FetchActivitySince pages TRADE (or Type) rows at or after since, newest first.
+// truncated is true if the page budget ran out before the window started.
+func (c *Client) FetchActivitySince(ctx context.Context, user string, since int64, typ string) ([]Activity, bool, error) {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return nil, false, fmt.Errorf("user wallet required")
+	}
+	typ = strings.TrimSpace(typ)
+	if typ == "" {
+		typ = "TRADE"
+	}
+
+	out := make([]Activity, 0, defaultActivityLimit)
+	offset := 0
+	for page := 0; page < maxActivityPages; page++ {
+		acts, err := c.FetchActivity(ctx, FetchActivityOptions{
+			User:   user,
+			Limit:  500,
+			Offset: offset,
+			Type:   typ,
+			Start:  since,
+		})
+		if err != nil {
+			return out, false, err
+		}
+		if len(acts) == 0 {
+			return out, false, nil
+		}
+		for _, a := range acts {
+			if since > 0 && a.Timestamp < since {
+				continue
+			}
+			out = append(out, a)
+		}
+		last := acts[len(acts)-1].Timestamp
+		if len(acts) < 500 || (since > 0 && last < since) {
+			return out, false, nil
+		}
+		offset += 500
+		if offset >= maxActivityOffset {
+			return out, true, nil
+		}
+	}
+	return out, true, nil
+}
+
+// FetchActivitySinceBatch fetches each wallet's activity since the timestamp.
+func (c *Client) FetchActivitySinceBatch(ctx context.Context, users []string, since int64, typ string) ([]Activity, bool, error) {
+	if len(users) == 0 {
+		return nil, false, nil
+	}
+
+	workers := c.Workers
+	if workers <= 0 {
+		workers = 16
+	}
+	if workers > len(users) {
+		workers = len(users)
+	}
+
+	type res struct {
+		acts      []Activity
+		truncated bool
+		err       error
+	}
+	jobs := make(chan string)
+	results := make(chan res)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for user := range jobs {
+				acts, trunc, err := c.FetchActivitySince(ctx, user, since, typ)
+				results <- res{acts: acts, truncated: trunc, err: err}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	go func() {
+		defer close(jobs)
+		for _, user := range users {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- user:
+			}
+		}
+	}()
+
+	out := make([]Activity, 0)
+	var firstErr error
+	truncated := false
+	for r := range results {
+		if r.truncated {
+			truncated = true
+		}
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
+			continue
+		}
+		out = append(out, r.acts...)
+	}
+	if firstErr != nil {
+		return out, truncated, firstErr
+	}
+	return out, truncated, nil
 }
