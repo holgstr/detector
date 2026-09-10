@@ -83,6 +83,9 @@ func main() {
 		if me.Username != "" {
 			log.Printf("bot @%s  https://t.me/%s", me.Username, me.Username)
 		}
+		if err := tg.DeleteWebhook(ctx); err != nil {
+			log.Printf("deleteWebhook: %v", err)
+		}
 		if state.ChatID == 0 {
 			if me.Username != "" {
 				log.Printf("waiting for /start — open https://t.me/%s and send any message", me.Username)
@@ -241,10 +244,17 @@ func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client
 		updates, err := tg.GetUpdates(ctx, offset, 25)
 		if err != nil {
 			log.Printf("getUpdates: %v", err)
+			wait := 5 * time.Second
+			if telegram.PollBlocked(err) {
+				if dErr := tg.DeleteWebhook(ctx); dErr != nil {
+					log.Printf("deleteWebhook: %v", dErr)
+				}
+				wait = time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(wait):
 			}
 			continue
 		}
@@ -285,8 +295,20 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if err := alert.SaveState(b.path, b.state); err != nil {
 		log.Printf("save state: %v", err)
 	}
+	log.Printf("chat %d text=%q cmd=%d first=%v", chatID, u.Message.Text, cmd.Cmd, first)
 	b.mu.Unlock()
 
+	for _, text := range commandReplies(first, cmd, min) {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+	if cmd.Cmd == alert.CmdNet {
+		replyNet(ctx, tg, api, chatID, cmd)
+	}
+}
+
+func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 	var replies []string
 	if first || cmd.Cmd == alert.CmdStart {
 		replies = append(replies, welcome(min))
@@ -298,15 +320,12 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 		}
 	case alert.CmdHelp:
 		replies = append(replies, alert.HelpText(min))
-	}
-	for _, text := range replies {
-		if err := tg.SendMessage(ctx, chatID, text); err != nil {
-			log.Printf("reply: %v", err)
+	case alert.CmdNone:
+		if !first {
+			replies = append(replies, "Still here. /help for commands.")
 		}
 	}
-	if cmd.Cmd == alert.CmdNet {
-		replyNet(ctx, tg, api, chatID, cmd)
-	}
+	return replies
 }
 
 func welcome(minUSD float64) string {

@@ -93,6 +93,37 @@ func TestGetUpdates(t *testing.T) {
 	}
 }
 
+func TestDeleteWebhook(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/deleteWebhook") {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		if r.URL.Query().Get("drop_pending_updates") != "false" {
+			t.Errorf("query=%s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": true})
+	}))
+	t.Cleanup(ts.Close)
+	c := New("TEST")
+	c.Base = ts.URL
+	c.HTTP = ts.Client()
+	if err := c.DeleteWebhook(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPollBlocked(t *testing.T) {
+	if PollBlocked(nil) {
+		t.Fatal("nil")
+	}
+	if !PollBlocked(fmt.Errorf("telegram getUpdates: Conflict: terminated by other getUpdates request")) {
+		t.Fatal("conflict")
+	}
+	if !PollBlocked(fmt.Errorf("telegram getUpdates: can't use getUpdates method while webhook is active")) {
+		t.Fatal("webhook")
+	}
+}
+
 func TestAPIError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "description": "Unauthorized"})
