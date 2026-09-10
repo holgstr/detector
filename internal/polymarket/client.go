@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -319,30 +320,63 @@ func (c *Client) BuildResult(ctx context.Context, marketInput string, limit int)
 }
 
 func (c *Client) getJSON(ctx context.Context, rawURL string, dest any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return err
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "detector-market-holders/1.0")
 
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	var last error
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if attempt > 0 {
+			wait := time.Duration(1<<uint(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return err
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "detector-market-holders/1.0")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			last = fmt.Errorf("GET %s: %s: %s", rawURL, resp.Status, truncate(string(body), 200))
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if n, err := strconv.Atoi(ra); err == nil && n > 0 && n < 30 {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(time.Duration(n) * time.Second):
+					}
+				}
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("GET %s: %s: %s", rawURL, resp.Status, truncate(string(body), 200))
+		}
+		if err := json.Unmarshal(body, dest); err != nil {
+			return fmt.Errorf("decode %s: %w", rawURL, err)
+		}
+		return nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s: %s: %s", rawURL, resp.Status, truncate(string(body), 200))
-	}
-	if err := json.Unmarshal(body, dest); err != nil {
-		return fmt.Errorf("decode %s: %w", rawURL, err)
-	}
-	return nil
+	return last
 }
 
 func isConditionID(s string) bool {
