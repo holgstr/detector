@@ -64,6 +64,23 @@ type sendReq struct {
 	DisableWebPagePreview bool   `json:"disable_web_page_preview"`
 }
 
+// DeleteWebhook clears a webhook so getUpdates polling can run.
+// Pending chat messages are kept (drop_pending_updates=false).
+func (c *Client) DeleteWebhook(ctx context.Context) error {
+	var unused json.RawMessage
+	return c.do(ctx, "deleteWebhook?drop_pending_updates=false", nil, "", &unused)
+}
+
+// PollBlocked reports Telegram rejecting getUpdates because another poller
+// or a webhook still owns the token (HTTP 409 Conflict).
+func PollBlocked(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "conflict") || strings.Contains(s, "webhook")
+}
+
 // GetMe checks the token and returns the bot's identity.
 func (c *Client) GetMe(ctx context.Context) (User, error) {
 	var me User

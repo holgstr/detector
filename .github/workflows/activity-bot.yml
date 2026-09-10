@@ -5,22 +5,33 @@
 #   TELEGRAM_BOT_TOKEN   (required)
 #   TELEGRAM_CHAT_ID     (optional secret or Actions variable)
 #
-# Then merge to main (schedule only runs on the default branch) and send
-# /start to https://t.me/detectx_bot while a run is in progress.
+# Then merge to main. A push that touches the bot cancels the old job and
+# starts a new one so hang-fixes actually take effect. Send /start to
+# https://t.me/detectx_bot while a run is in progress if chat id is unset.
 # After the first bind, chat id is cached and written to the
 # TELEGRAM_CHAT_ID Actions variable so a cancel/restart does not wait
 # for another /start. If Telegram is silent after a restart, message
 # the bot once — pending /start updates are consumed by the previous run.
 #
-# Jobs last ~6h (runner cap). The next schedule overlaps so the bot
-# restarts with only a short gap.
+# Jobs last ~6h (runner cap). The schedule fires every 3h so GitHub delay
+# is less likely to leave a dead gap overnight.
 
 name: Activity bot
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/activity-bot.yml"
+      - "cmd/activity-bot/**"
+      - "internal/telegram/**"
+      - "internal/alert/**"
+      - "internal/sharps/**"
+      - "internal/polymarket/**"
+      - "go.mod"
   schedule:
-    # Every 5h55m — inside the 6h job limit, with overlap from concurrency.
-    - cron: "5 */6 * * *"
+    # Every 3h — well inside the 6h job limit so a delayed cron still overlaps.
+    - cron: "10 */3 * * *"
   workflow_dispatch:
     inputs:
       chat_id:
