@@ -48,6 +48,8 @@ type NetReport struct {
 }
 
 // ResolveNetWallets picks tracked wallets for /net [trader].
+// A unique prefix/substring match is enough (Flip → Flipadelphia).
+// Several matches at the same rank are listed instead of guessed.
 func ResolveNetWallets(query string) ([]sharps.Wallet, string) {
 	q := strings.TrimSpace(query)
 	if q == "" || strings.EqualFold(q, "all") {
@@ -55,7 +57,14 @@ func ResolveNetWallets(query string) ([]sharps.Wallet, string) {
 	}
 	hits := sharps.Lookup(q)
 	if len(hits) == 0 {
-		return nil, fmt.Sprintf("No tracked trader matching %q. /help for the list.", q)
+		return nil, fmt.Sprintf("No tracked trader matching %q.", q)
+	}
+	if len(hits) > 1 {
+		names := make([]string, len(hits))
+		for i, w := range hits {
+			names[i] = w.Name
+		}
+		return nil, fmt.Sprintf("Several traders match %q: %s", q, strings.Join(names, ", "))
 	}
 	return hits, ""
 }

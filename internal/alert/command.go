@@ -28,7 +28,7 @@ type ParsedCommand struct {
 	Trader string
 }
 
-// ParseCommand understands /start, /help, /minsize [amount], and /net [Nh] [trader].
+// ParseCommand understands /start, /help, /minsize [amount], and /net [Nh|trader] in either order.
 func ParseCommand(text string) ParsedCommand {
 	line := strings.TrimSpace(text)
 	if line == "" {
@@ -191,7 +191,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h (flat markets omitted)\n/net 6h SnowLover7 — one trader, last 6 hours\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.

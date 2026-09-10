@@ -9,7 +9,7 @@
 // Optional: TELEGRAM_CHAT_ID if you already know it.
 // Chat: /minsize 100 — same floor as the Activity tab "Min size $".
 // Same-market same-direction fills are aggregated first, then the floor applies.
-// /net 6h [trader] — markets where net Yes/No exposure changed in that window.
+// /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 package main
 
 import (
@@ -300,8 +300,12 @@ func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 		}
 		return
 	}
+	label := strings.TrimSpace(cmd.Trader)
+	if len(wallets) == 1 {
+		label = wallets[0].Name
+	}
 	rep, err := alert.FetchNetReport(ctx, api, wallets, cmd.Window)
-	chunks := alert.FormatNetReport(rep, cmd.Trader)
+	chunks := alert.FormatNetReport(rep, label)
 	if err != nil && len(rep.Traders) == 0 {
 		chunks = []string{fmt.Sprintf("Couldn't load activity: %v", err)}
 	} else if err != nil {

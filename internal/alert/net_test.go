@@ -114,9 +114,12 @@ func TestResolveNetWallets(t *testing.T) {
 	if err != "" || len(all) != len(sharps.Tracked) {
 		t.Fatalf("all %d err=%s", len(all), err)
 	}
-	one, err := ResolveNetWallets("snowlover7")
-	if err != "" || len(one) != 1 || one[0].Name != "SnowLover7" {
+	one, err := ResolveNetWallets("Flip")
+	if err != "" || len(one) != 1 || one[0].Name != "Flipadelphia" {
 		t.Fatalf("%+v %s", one, err)
+	}
+	if _, err := ResolveNetWallets("w"); err == "" || !strings.Contains(err, "Several") {
+		t.Fatalf("ambiguous w: %q", err)
 	}
 	if _, err := ResolveNetWallets("no-such-trader"); err == "" {
 		t.Fatal("expected miss")

@@ -50,29 +50,34 @@ func NameOf(wallet string) string {
 	return ""
 }
 
-// Lookup finds tracked wallets by display name or address prefix.
-// A unique exact (case-insensitive) name or full address wins first.
+// Lookup finds tracked wallets by a short name fragment or address prefix.
+// Rank: exact name/address, then name/address prefix (Flip → Flipadelphia),
+// then name substring. The best non-empty rank is returned as-is (1 or many).
 func Lookup(query string) []Wallet {
-	q := strings.TrimSpace(query)
+	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return append([]Wallet(nil), Tracked...)
 	}
-	ql := strings.ToLower(q)
-	var exact, prefix []Wallet
+	q = strings.Trim(q, "\"'`“”„")
+	var exact, prefix, contain []Wallet
 	for _, w := range Tracked {
 		name := strings.ToLower(w.Name)
 		addr := strings.ToLower(w.Address)
-		if name == ql || addr == ql {
+		switch {
+		case name == q || addr == q:
 			exact = append(exact, w)
-			continue
-		}
-		if strings.HasPrefix(name, ql) || strings.HasPrefix(addr, ql) ||
-			strings.Contains(name, ql) {
+		case strings.HasPrefix(name, q) || (strings.HasPrefix(q, "0x") && strings.HasPrefix(addr, q)):
 			prefix = append(prefix, w)
+		case strings.Contains(name, q):
+			contain = append(contain, w)
 		}
 	}
-	if len(exact) > 0 {
+	switch {
+	case len(exact) > 0:
 		return exact
+	case len(prefix) > 0:
+		return prefix
+	default:
+		return contain
 	}
-	return prefix
 }
