@@ -1,6 +1,39 @@
 package polymarket
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestGetJSONRetries429(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if n < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"Too Many Requests"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	defer srv.Close()
+
+	c := NewClient()
+	var dest map[string]bool
+	if err := c.getJSON(context.Background(), srv.URL, &dest); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("calls=%d want 3", n)
+	}
+	if !dest["ok"] {
+		t.Fatalf("dest=%v", dest)
+	}
+}
 
 func TestExtractMarketSlug(t *testing.T) {
 	cases := []struct {

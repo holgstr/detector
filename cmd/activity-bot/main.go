@@ -85,16 +85,17 @@ func main() {
 			} else {
 				log.Print("waiting for /start in Telegram…")
 			}
+			log.Print("restarts consume the previous /start; ping the bot again if this hangs")
 		}
 		go listenChat(ctx, tg, b)
 		if err := b.waitBound(ctx); err != nil {
 			log.Fatalf("telegram: %v", err)
 		}
-		log.Printf("chat bound; min size %s", formatMin(b.minUSD()))
+		log.Printf("chat %d bound; min size %s", b.chatID(), formatMin(b.minUSD()))
 	}
 
 	client := polymarket.NewClient()
-	client.Workers = 6
+	client.Workers = 3
 
 	poll := func() error {
 		return runPoll(ctx, client, tg, b, *limit, *dryRun)
@@ -121,6 +122,7 @@ type bot struct {
 	state       *alert.State
 	path        string
 	fallbackMin float64
+	quietPolls  int
 }
 
 func (b *bot) minUSD() float64 {
@@ -129,7 +131,15 @@ func (b *bot) minUSD() float64 {
 	return b.state.EffectiveMinUSD(b.fallbackMin)
 }
 
+func (b *bot) chatID() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state.ChatID
+}
+
 func (b *bot) waitBound(ctx context.Context) error {
+	nudge := time.NewTicker(30 * time.Second)
+	defer nudge.Stop()
 	for {
 		b.mu.Lock()
 		id := b.state.ChatID
@@ -140,6 +150,8 @@ func (b *bot) waitBound(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-nudge.C:
+			log.Print("still waiting for /start — send any message to the bot (a restart does not reuse the last one)")
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
@@ -179,8 +191,18 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 	b.mu.Unlock()
 
 	if len(alerts) == 0 {
+		b.mu.Lock()
+		b.quietPolls++
+		n := b.quietPolls
+		b.mu.Unlock()
+		if n == 1 || n%15 == 0 {
+			log.Printf("poll quiet (%d in a row, min %s)", n, formatMin(minUSD))
+		}
 		return nil
 	}
+	b.mu.Lock()
+	b.quietPolls = 0
+	b.mu.Unlock()
 
 	alert.AttachNetPositions(ctx, api, alerts)
 
