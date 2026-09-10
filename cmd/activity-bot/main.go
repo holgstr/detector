@@ -9,6 +9,7 @@
 // Optional: TELEGRAM_CHAT_ID if you already know it.
 // Chat: /minsize 100 — same floor as the Activity tab "Min size $".
 // Same-market same-direction fills are aggregated first, then the floor applies.
+// /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 package main
 
 import (
@@ -66,6 +67,9 @@ func main() {
 		fallbackMin: *minUSD,
 	}
 
+	client := polymarket.NewClient()
+	client.Workers = 3
+
 	var tg *telegram.Client
 	if !*dryRun {
 		if strings.TrimSpace(*token) == "" {
@@ -87,15 +91,12 @@ func main() {
 			}
 			log.Print("restarts consume the previous /start; ping the bot again if this hangs")
 		}
-		go listenChat(ctx, tg, b)
+		go listenChat(ctx, tg, client, b)
 		if err := b.waitBound(ctx); err != nil {
 			log.Fatalf("telegram: %v", err)
 		}
 		log.Printf("chat %d bound; min size %s", b.chatID(), formatMin(b.minUSD()))
 	}
-
-	client := polymarket.NewClient()
-	client.Workers = 3
 
 	poll := func() error {
 		return runPoll(ctx, client, tg, b, *limit, *dryRun)
@@ -228,7 +229,7 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 	return nil
 }
 
-func listenChat(ctx context.Context, tg *telegram.Client, b *bot) {
+func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return
@@ -248,12 +249,12 @@ func listenChat(ctx context.Context, tg *telegram.Client, b *bot) {
 			continue
 		}
 		for _, u := range updates {
-			handleUpdate(ctx, tg, b, u)
+			handleUpdate(ctx, tg, api, b, u)
 		}
 	}
 }
 
-func handleUpdate(ctx context.Context, tg *telegram.Client, b *bot, u telegram.Update) {
+func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, u telegram.Update) {
 	b.mu.Lock()
 	b.state.TelegramOffset = u.UpdateID + 1
 	if u.Message == nil || u.Message.Chat.ID == 0 {
@@ -289,24 +290,63 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, b *bot, u telegram.U
 	var replies []string
 	if first || cmd.Cmd == alert.CmdStart {
 		replies = append(replies, welcome(min))
-	} else {
-		switch cmd.Cmd {
-		case alert.CmdMinSizeShow, alert.CmdMinSizeSet:
+	}
+	switch cmd.Cmd {
+	case alert.CmdMinSizeShow, alert.CmdMinSizeSet:
+		if !first && cmd.Cmd != alert.CmdStart {
 			replies = append(replies, alert.MinSizeStatus(min))
-		case alert.CmdHelp:
-			replies = append(replies, alert.HelpText(min))
 		}
+	case alert.CmdHelp:
+		replies = append(replies, alert.HelpText(min))
 	}
 	for _, text := range replies {
 		if err := tg.SendMessage(ctx, chatID, text); err != nil {
 			log.Printf("reply: %v", err)
 		}
 	}
+	if cmd.Cmd == alert.CmdNet {
+		replyNet(ctx, tg, api, chatID, cmd)
+	}
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/net 6h for net position changes.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
+}
+
+func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+	wallets, errMsg := alert.ResolveNetWallets(cmd.Trader)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	label := strings.TrimSpace(cmd.Trader)
+	if len(wallets) == 1 {
+		label = wallets[0].Name
+	}
+	rep, err := alert.FetchNetReport(ctx, api, wallets, cmd.Window)
+	chunks := alert.FormatNetReport(rep, label)
+	if err != nil && len(rep.Traders) == 0 {
+		chunks = []string{fmt.Sprintf("Couldn't load activity: %v", err)}
+	} else if err != nil {
+		chunks = append(chunks, fmt.Sprintf("(partial fetch: %v)", err))
+	}
+	for _, text := range chunks {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+	log.Printf("net %s trader=%q markets=%d", rep.Window, cmd.Trader, countMarkets(rep))
+}
+
+func countMarkets(r alert.NetReport) int {
+	n := 0
+	for _, t := range r.Traders {
+		n += len(t.Markets)
+	}
+	return n
 }
 
 func formatMin(n float64) string {

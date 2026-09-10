@@ -1,6 +1,9 @@
 package alert
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseCommand(t *testing.T) {
 	if ParseCommand("/start").Cmd != CmdStart {
@@ -29,6 +32,34 @@ func TestParseCommand(t *testing.T) {
 	}
 	if ParseCommand("/minsize nope").Cmd != CmdHelp {
 		t.Fatal("bad amount → help")
+	}
+
+	got = ParseCommand("/net")
+	if got.Cmd != CmdNet || got.Window != 24*time.Hour || got.Trader != "" {
+		t.Fatalf("net default %+v", got)
+	}
+	got = ParseCommand("/net Flip 6h")
+	if got.Cmd != CmdNet || got.Window != 6*time.Hour || got.Trader != "Flip" {
+		t.Fatalf("name then window %+v", got)
+	}
+	got = ParseCommand("/net 6h Flip")
+	if got.Cmd != CmdNet || got.Window != 6*time.Hour || got.Trader != "Flip" {
+		t.Fatalf("window then name %+v", got)
+	}
+	got = ParseCommand("/net Flipadelphia 12")
+	if got.Cmd != CmdNet || got.Window != 12*time.Hour || got.Trader != "Flipadelphia" {
+		t.Fatalf("%+v", got)
+	}
+	got = ParseCommand("/net 1d")
+	if got.Cmd != CmdNet || got.Window != 24*time.Hour {
+		t.Fatalf("%+v", got)
+	}
+	got = ParseCommand("/net all")
+	if got.Cmd != CmdNet || got.Trader != "" {
+		t.Fatalf("all %+v", got)
+	}
+	if ParseCommand("/net 6h 12h").Cmd != CmdHelp {
+		t.Fatal("two windows → help")
 	}
 }
 
