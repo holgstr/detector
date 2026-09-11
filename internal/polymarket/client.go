@@ -26,6 +26,10 @@ type Client struct {
 
 	eventMu    sync.Mutex
 	eventCache map[string]EventMeta
+
+	sportsMu     sync.Mutex
+	sportsTagIDs map[int]struct{}
+	sportsIDsOK  bool
 }
 
 func NewClient() *Client {
