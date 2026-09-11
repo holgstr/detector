@@ -11,6 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos Andersson matches the Magdalena Andersson market and lists tracked nets.
+// /pos works on any live market (sports included); words, slugs, and URLs all resolve.
 package main
 
 import (
@@ -333,7 +334,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/net 6h for net position changes.\n/pos Andersson for tracked holdings in a market.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/net 6h for net position changes.\n/pos Andersson for tracked holdings in any market.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
 }
 
@@ -367,7 +368,7 @@ func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
-		if err := tg.SendMessage(ctx, chatID, "Usage: /pos Andersson — words match market titles."); err != nil {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /pos Andersson — any market; words, slug, or URL."); err != nil {
 			log.Printf("reply: %v", err)
 		}
 		return

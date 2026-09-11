@@ -33,6 +33,11 @@ func TestPickBestMarketAndersson(t *testing.T) {
 			Closed:     true,
 			Volume24hr: 9e9,
 		},
+		{
+			Market:     Market{ConditionID: "event-only", Question: "Will someone else win?", Slug: "someone-else"},
+			EventTitle: "Andersson series",
+			Volume24hr: 8e9,
+		},
 	}
 	got, ok := PickBestMarket("Andersson", hits)
 	if !ok || got.Market.ConditionID != "magdalena" {
@@ -47,6 +52,38 @@ func TestPickBestMarketAndersson(t *testing.T) {
 	}
 }
 
+func TestPickBestMarketEventTitleAndAnyTopic(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market:         Market{ConditionID: "50bps", Question: "Will the Fed decrease interest rates by 50+ bps after the September 2026 meeting?", Slug: "fed-50", EventSlug: "fed-decision-in-september"},
+			GroupItemTitle: "50+ bps decrease",
+			EventTitle:     "Fed Decision in September?",
+			Volume24hr:     10,
+			Volume:         100,
+		},
+		{
+			Market:         Market{ConditionID: "25bps", Question: "Will the Fed decrease interest rates by 25 bps after the September 2026 meeting?", Slug: "fed-25", EventSlug: "fed-decision-in-september"},
+			GroupItemTitle: "25 bps decrease",
+			EventTitle:     "Fed Decision in September?",
+			Volume24hr:     80,
+			Volume:         800,
+		},
+		{
+			Market:     Market{ConditionID: "lakers", Question: "Vaxjo Lakers vs. Tappara Tampere", Slug: "vaxjo-lakers-vs-tappara-tampere"},
+			EventTitle: "Vaxjo Lakers vs. Tappara Tampere",
+			Volume24hr: 5,
+		},
+	}
+	got, ok := PickBestMarket("Fed Decision", hits)
+	if !ok || got.Market.ConditionID != "25bps" {
+		t.Fatalf("event title should pick highest-volume child: %+v ok=%v", got, ok)
+	}
+	got, ok = PickBestMarket("Lakers", hits)
+	if !ok || got.Market.ConditionID != "lakers" {
+		t.Fatalf("sports: %+v", got)
+	}
+}
+
 func TestSearchMarketsQuery(t *testing.T) {
 	var path string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +93,9 @@ func TestSearchMarketsQuery(t *testing.T) {
 		}
 		if r.URL.Query().Get("events_status") != "active" {
 			t.Errorf("events_status=%s", r.URL.Query().Get("events_status"))
+		}
+		if r.URL.Query().Get("sort") != "volume24hr" {
+			t.Errorf("sort=%s", r.URL.Query().Get("sort"))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"events": []map[string]any{{
