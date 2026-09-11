@@ -46,6 +46,7 @@ type publicSearchMarket struct {
 	Volume         any     `json:"volume"`
 	Active         bool    `json:"active"`
 	Closed         bool    `json:"closed"`
+	Archived       bool    `json:"archived"`
 }
 
 // SearchMarkets runs Gamma /public-search and flattens nested event markets.
@@ -59,6 +60,7 @@ func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarke
 	q.Set("q", query)
 	q.Set("limit_per_type", fmt.Sprintf("%d", defaultSearchLimit))
 	q.Set("events_status", "active")
+	q.Set("keep_closed_markets", "0")
 	q.Set("sort", "volume24hr")
 	q.Set("ascending", "false")
 	q.Set("search_profiles", "false")
@@ -72,7 +74,13 @@ func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarke
 	out := make([]SearchMarket, 0, 32)
 	seen := make(map[string]struct{})
 	for _, ev := range resp.Events {
+		if ev.Closed || !ev.Active {
+			continue
+		}
 		for _, g := range ev.Markets {
+			if !marketIsLive(g.Active, g.Closed, g.Archived) {
+				continue
+			}
 			cid := strings.TrimSpace(g.ConditionID)
 			if cid == "" {
 				continue
@@ -111,9 +119,10 @@ func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarke
 	return out, nil
 }
 
-// FindMarket resolves a condition id, URL, slug, or free-text name for any
-// Polymarket market. Word queries use public-search and pick the highest-volume
-// live hit whose market (or event) title contains the words.
+// FindMarket resolves a condition id, URL, slug, or free-text name.
+// Only active, unresolved markets are returned. Word queries use
+// public-search and pick the highest-volume live hit whose market
+// (or event) title contains the words.
 func (c *Client) FindMarket(ctx context.Context, query string) (SearchMarket, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -121,9 +130,12 @@ func (c *Client) FindMarket(ctx context.Context, query string) (SearchMarket, er
 	}
 
 	if isConditionID(query) || looksLikeMarketURL(query) || looksLikeSlug(query) {
-		m, err := c.ResolveMarket(ctx, query)
-		if err == nil && strings.TrimSpace(m.ConditionID) != "" {
-			return SearchMarket{Market: m, EventTitle: m.EventSlug}, nil
+		sm, err := c.resolveSearchMarket(ctx, query)
+		if err == nil {
+			if !isLiveMarket(sm) {
+				return SearchMarket{}, fmt.Errorf("market %q is resolved, not active", query)
+			}
+			return sm, nil
 		}
 		if isConditionID(query) || looksLikeMarketURL(query) {
 			return SearchMarket{}, err
@@ -136,14 +148,40 @@ func (c *Client) FindMarket(ctx context.Context, query string) (SearchMarket, er
 	}
 	best, ok := PickBestMarket(query, hits)
 	if !ok {
-		return SearchMarket{}, fmt.Errorf("no open market matching %q", query)
+		return SearchMarket{}, fmt.Errorf("no active market matching %q", query)
 	}
 	return best, nil
 }
 
-// PickBestMarket chooses a live market for a word query.
+func (c *Client) resolveSearchMarket(ctx context.Context, query string) (SearchMarket, error) {
+	var g gammaMarket
+	var err error
+	if isConditionID(query) {
+		g, err = c.fetchGammaByCondition(ctx, query)
+	} else {
+		slug, sErr := extractMarketSlug(query)
+		if sErr != nil {
+			return SearchMarket{}, sErr
+		}
+		g, err = c.fetchGammaBySlug(ctx, slug)
+	}
+	if err != nil {
+		return SearchMarket{}, err
+	}
+	return searchMarketFromGamma(g), nil
+}
+
+func searchMarketFromGamma(g gammaMarket) SearchMarket {
+	return SearchMarket{
+		Market: toMarket(g),
+		Active: g.Active,
+		Closed: g.Closed || g.Archived,
+	}
+}
+
+// PickBestMarket chooses an active, unresolved market for a word query.
 // Own titles/slugs outrank event titles (Andersson → Magdalena, not a sibling
-// in the same event). Open markets outrank closed. Then 24h volume, then total.
+// in the same event). Then 24h volume, then total.
 func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 	toks := searchTokens(query)
 	if len(toks) == 0 || len(hits) == 0 {
@@ -156,7 +194,7 @@ func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 	}
 	var matched []scored
 	for _, h := range hits {
-		if strings.TrimSpace(h.Market.ConditionID) == "" {
+		if !isLiveMarket(h) || strings.TrimSpace(h.Market.ConditionID) == "" {
 			continue
 		}
 		rank := matchRank(h, toks)
@@ -169,10 +207,6 @@ func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 		return SearchMarket{}, false
 	}
 	sort.SliceStable(matched, func(i, j int) bool {
-		oi, oj := !matched[i].hit.Closed, !matched[j].hit.Closed
-		if oi != oj {
-			return oi
-		}
 		if matched[i].rank != matched[j].rank {
 			return matched[i].rank > matched[j].rank
 		}
@@ -185,6 +219,14 @@ func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 		return matched[i].hit.Market.Question < matched[j].hit.Market.Question
 	})
 	return matched[0].hit, true
+}
+
+func isLiveMarket(h SearchMarket) bool {
+	return marketIsLive(h.Active, h.Closed, false)
+}
+
+func marketIsLive(active, closed, archived bool) bool {
+	return active && !closed && !archived
 }
 
 func matchRank(h SearchMarket, toks []string) int {

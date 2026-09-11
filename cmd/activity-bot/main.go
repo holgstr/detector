@@ -11,7 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos Andersson matches the Magdalena Andersson market and lists tracked nets.
-// /pos works on any live market (sports included); words, slugs, and URLs all resolve.
+// /pos works on any active (unresolved) market; words, slugs, and URLs all resolve.
 package main
 
 import (
@@ -334,7 +334,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/net 6h for net position changes.\n/pos Andersson for tracked holdings in any market.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on non-sports trades.\n%s\n/net 6h for net position changes.\n/pos Andersson for tracked holdings in an active market.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
 }
 
@@ -368,15 +368,18 @@ func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
-		if err := tg.SendMessage(ctx, chatID, "Usage: /pos Andersson — any market; words, slug, or URL."); err != nil {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /pos Andersson — active (unresolved) market; words, slug, or URL."); err != nil {
 			log.Printf("reply: %v", err)
 		}
 		return
 	}
 	rep, err := alert.FetchPosReport(ctx, api, query, sharps.Tracked)
 	if err != nil && len(rep.Holdings) == 0 && rep.Title == "" {
-		msg := fmt.Sprintf("No open market matching %q.", query)
-		if !strings.Contains(strings.ToLower(err.Error()), "no open market") {
+		msg := fmt.Sprintf("No active market matching %q.", query)
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "resolved") {
+			msg = fmt.Sprintf("%q is resolved, not an active market.", query)
+		} else if !strings.Contains(low, "active market") && !strings.Contains(low, "no active") {
 			msg = fmt.Sprintf("Couldn't load market: %v", err)
 		}
 		if err := tg.SendMessage(ctx, chatID, msg); err != nil {

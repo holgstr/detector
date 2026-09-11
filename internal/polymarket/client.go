@@ -67,27 +67,43 @@ func (c *Client) ResolveMarket(ctx context.Context, input string) (Market, error
 }
 
 func (c *Client) fetchMarketBySlug(ctx context.Context, slug string) (Market, error) {
-	u := gammaBase + "/markets?slug=" + url.QueryEscape(slug)
-	var markets []gammaMarket
-	if err := c.getJSON(ctx, u, &markets); err != nil {
+	g, err := c.fetchGammaBySlug(ctx, slug)
+	if err != nil {
 		return Market{}, err
 	}
-	if len(markets) == 0 {
-		return Market{}, fmt.Errorf("no market found for slug %q", slug)
-	}
-	return toMarket(markets[0]), nil
+	return toMarket(g), nil
 }
 
 func (c *Client) fetchMarketByCondition(ctx context.Context, conditionID string) (Market, error) {
+	g, err := c.fetchGammaByCondition(ctx, conditionID)
+	if err != nil {
+		return Market{}, err
+	}
+	return toMarket(g), nil
+}
+
+func (c *Client) fetchGammaBySlug(ctx context.Context, slug string) (gammaMarket, error) {
+	u := gammaBase + "/markets?slug=" + url.QueryEscape(slug)
+	var markets []gammaMarket
+	if err := c.getJSON(ctx, u, &markets); err != nil {
+		return gammaMarket{}, err
+	}
+	if len(markets) == 0 {
+		return gammaMarket{}, fmt.Errorf("no market found for slug %q", slug)
+	}
+	return markets[0], nil
+}
+
+func (c *Client) fetchGammaByCondition(ctx context.Context, conditionID string) (gammaMarket, error) {
 	u := gammaBase + "/markets?condition_ids=" + url.QueryEscape(conditionID)
 	var markets []gammaMarket
 	if err := c.getJSON(ctx, u, &markets); err != nil {
-		return Market{}, err
+		return gammaMarket{}, err
 	}
 	if len(markets) == 0 {
-		return Market{}, fmt.Errorf("no market found for condition %s", conditionID)
+		return gammaMarket{}, fmt.Errorf("no market found for condition %s", conditionID)
 	}
-	return toMarket(markets[0]), nil
+	return markets[0], nil
 }
 
 func toMarket(g gammaMarket) Market {
