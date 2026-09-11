@@ -27,10 +27,10 @@ type HolderRecord struct {
 
 // Result is the intermediate artifact written to disk.
 type Result struct {
-	FetchedAt string      `json:"fetched_at"`
-	Market    Market      `json:"market"`
-	Yes       HolderSide  `json:"yes"`
-	No        HolderSide  `json:"no"`
+	FetchedAt string     `json:"fetched_at"`
+	Market    Market     `json:"market"`
+	Yes       HolderSide `json:"yes"`
+	No        HolderSide `json:"no"`
 }
 
 type gammaMarket struct {
@@ -39,6 +39,9 @@ type gammaMarket struct {
 	Question     string `json:"question"`
 	Outcomes     string `json:"outcomes"`
 	ClobTokenIDs string `json:"clobTokenIds"`
+	Active       bool   `json:"active"`
+	Closed       bool   `json:"closed"`
+	Archived     bool   `json:"archived"`
 	Events       []struct {
 		Slug string `json:"slug"`
 	} `json:"events"`

@@ -61,6 +61,19 @@ func TestParseCommand(t *testing.T) {
 	if ParseCommand("/net 6h 12h").Cmd != CmdHelp {
 		t.Fatal("two windows → help")
 	}
+
+	got = ParseCommand("/pos Andersson")
+	if got.Cmd != CmdPos || got.Market != "Andersson" {
+		t.Fatalf("pos %+v", got)
+	}
+	got = ParseCommand("/pos@detectx_bot Magdalena Andersson")
+	if got.Cmd != CmdPos || got.Market != "Magdalena Andersson" {
+		t.Fatalf("pos mention %+v", got)
+	}
+	got = ParseCommand("/holdings")
+	if got.Cmd != CmdPos || got.Market != "" {
+		t.Fatalf("pos empty %+v", got)
+	}
 }
 
 func TestEffectiveMinUSD(t *testing.T) {
