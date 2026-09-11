@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const defaultPositionLimit = 50
@@ -58,6 +59,67 @@ func (c *Client) FetchPositions(ctx context.Context, opt FetchPositionsOptions) 
 		return nil, err
 	}
 	return out, nil
+}
+
+// FetchPositionsBatch fetches the same market (or all markets) for many wallets.
+func (c *Client) FetchPositionsBatch(ctx context.Context, users []string, opt FetchPositionsOptions) (map[string][]Position, error) {
+	out := make(map[string][]Position, len(users))
+	if len(users) == 0 {
+		return out, nil
+	}
+
+	workers := c.Workers
+	if workers <= 0 {
+		workers = 16
+	}
+	if workers > len(users) {
+		workers = len(users)
+	}
+
+	type res struct {
+		user string
+		pos  []Position
+		err  error
+	}
+	jobs := make(chan string)
+	results := make(chan res)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for user := range jobs {
+				o := opt
+				o.User = user
+				pos, err := c.FetchPositions(ctx, o)
+				results <- res{user: strings.ToLower(user), pos: pos, err: err}
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	go func() {
+		defer close(jobs)
+		for _, user := range users {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- user:
+			}
+		}
+	}()
+
+	var firstErr error
+	for r := range results {
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
+			continue
+		}
+		out[r.user] = r.pos
+	}
+	return out, firstErr
 }
 
 // NetPosition is YES minus NO shares (or a single non-binary outcome).

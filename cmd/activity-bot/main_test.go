@@ -23,7 +23,7 @@ func TestCommandRepliesFirstMessageIsWelcome(t *testing.T) {
 
 func TestCommandRepliesHelp(t *testing.T) {
 	got := commandReplies(false, alert.ParsedCommand{Cmd: alert.CmdHelp}, 50)
-	if len(got) != 1 || !strings.Contains(got[0], "/net") {
+	if len(got) != 1 || !strings.Contains(got[0], "/net") || !strings.Contains(got[0], "/pos") {
 		t.Fatalf("%q", got)
 	}
 }
