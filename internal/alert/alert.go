@@ -15,7 +15,14 @@ import (
 	"github.com/holgstr/detector/internal/sharps"
 )
 
-const maxSeen = 8000
+const (
+	maxSeen = 8000
+	// MaxAlertAge is how recent a fill must be to page Telegram. The Data API
+	// /activity page is the last ~100 trades per wallet, which often still
+	// includes yesterday. After a checkpoint miss those rows look "unseen"
+	// and would otherwise dump as live alerts.
+	MaxAlertAge = 30 * time.Minute
+)
 
 // State is the on-disk checkpoint so restarts don't re-send old fills.
 type State struct {
@@ -166,18 +173,29 @@ type Plan struct {
 	FirstRun bool
 	Alerts   []Alert
 	DropKeys []string
+	Stale    int
 }
 
-// BuildPlan classifies unseen fills. Sports are dropped; lookup failures
-// are skipped so the next poll can retry. minUSD is applied after
-// aggregating same-wallet/market/side/outcome fills, so two $40+$70
-// BUYs become one $110 alert and pass a $100 floor. Sub-floor aggregates
-// stay unseen until later fills push them over.
+// BuildPlan classifies unseen fills. Sports and fills older than
+// MaxAlertAge are dropped; lookup failures are skipped so the next poll
+// can retry. minUSD is applied after aggregating same-wallet/market/
+// side/outcome fills, so two $40+$70 BUYs become one $110 alert and pass
+// a $100 floor. Sub-floor aggregates stay unseen until later fills push
+// them over — unless they age out first.
 func BuildPlan(ctx context.Context, api sportsLookup, s *State, acts []polymarket.Activity, minUSD float64) (Plan, error) {
+	return BuildPlanAt(ctx, api, s, acts, minUSD, time.Now())
+}
+
+// BuildPlanAt is BuildPlan with a frozen clock (tests).
+func BuildPlanAt(ctx context.Context, api sportsLookup, s *State, acts []polymarket.Activity, minUSD float64, now time.Time) (Plan, error) {
 	if !s.Seeded {
 		s.Seed(acts)
 		return Plan{FirstRun: true}, nil
 	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-MaxAlertAge).Unix()
 
 	sportsCache := make(map[string]bool)
 	failed := make(map[string]struct{})
@@ -202,9 +220,15 @@ func BuildPlan(ctx context.Context, api sportsLookup, s *State, acts []polymarke
 
 	var drop []string
 	var keep []polymarket.Activity
+	stale := 0
 	for _, a := range acts {
 		key := polymarket.ActivityKey(a)
 		if s.known(key) {
+			continue
+		}
+		if activityUnix(a.Timestamp) < cutoff {
+			drop = append(drop, key)
+			stale++
 			continue
 		}
 		sports, ok := isSports(a.EventSlug)
@@ -221,6 +245,7 @@ func BuildPlan(ctx context.Context, api sportsLookup, s *State, acts []polymarke
 	return Plan{
 		Alerts:   filterMinUSD(aggregate(keep), minUSD),
 		DropKeys: drop,
+		Stale:    stale,
 	}, nil
 }
 
@@ -294,6 +319,15 @@ func aggregate(acts []polymarket.Activity) []Alert {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+// activityUnix is seconds. The Data API usually sends epoch seconds;
+// millisecond values would look "in the future" and bypass the age filter.
+func activityUnix(ts int64) int64 {
+	if ts > 1e12 {
+		return ts / 1000
+	}
+	return ts
 }
 
 func groupKey(a polymarket.Activity) string {

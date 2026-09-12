@@ -6,9 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/holgstr/detector/internal/polymarket"
 )
+
+// Tests freeze "now" just after the fixture timestamps (unix 1–22).
+var testNow = time.Unix(30, 0)
 
 type fakeSports map[string]bool
 
@@ -49,7 +53,7 @@ func TestFirstRunSeedsWithoutAlerts(t *testing.T) {
 	acts := []polymarket.Activity{
 		act("0x23d81ba9371e576015c1e562db09c689f56b0288", "election", "BUY", "Yes", 100, 0.4, 10, "h1"),
 	}
-	p, err := BuildPlan(context.Background(), fakeSports{}, s, acts, 0)
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, acts, 0, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +64,7 @@ func TestFirstRunSeedsWithoutAlerts(t *testing.T) {
 		t.Fatal("expected seed")
 	}
 
-	p, err = BuildPlan(context.Background(), fakeSports{}, s, acts, 0)
+	p, err = BuildPlanAt(context.Background(), fakeSports{}, s, acts, 0, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +81,7 @@ func TestBuildPlanFiltersSportsAndDust(t *testing.T) {
 		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "No", 2, 0.5, 21, "dust"),
 		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "Yes", 200, 0.4, 22, "keep"),
 	}
-	p, err := BuildPlan(context.Background(), api, s, acts, 10)
+	p, err := BuildPlanAt(context.Background(), api, s, acts, 10, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +108,7 @@ func TestBuildPlanAggregatesThenAppliesMinUSD(t *testing.T) {
 		act(w, "election", "BUY", "No", 70, 0.32, 11, "b"),
 		act(w, "election", "SELL", "No", 80, 0.4, 12, "c"),
 	}
-	p, err := BuildPlan(context.Background(), fakeSports{}, s, acts, 100)
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, acts, 100, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +125,7 @@ func TestBuildPlanAggregatesThenAppliesMinUSD(t *testing.T) {
 
 	s.CommitSent(buy)
 	later := []polymarket.Activity{acts[2], act(w, "election", "SELL", "No", 30, 0.4, 13, "d")}
-	p2, err := BuildPlan(context.Background(), fakeSports{}, s, later, 100)
+	p2, err := BuildPlanAt(context.Background(), fakeSports{}, s, later, 100, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +142,7 @@ func TestBuildPlanAggregatesSameMarket(t *testing.T) {
 		act(w, "election", "BUY", "Yes", 300, 0.6, 11, "b"),
 		act(w, "election", "SELL", "Yes", 50, 0.5, 12, "c"),
 	}
-	p, err := BuildPlan(context.Background(), fakeSports{}, s, acts, 0)
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, acts, 0, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +168,7 @@ func TestBuildPlanAggregatesSameMarket(t *testing.T) {
 func TestBuildPlanEmptyEventSlugIsNotSports(t *testing.T) {
 	s := &State{Seeded: true, Seen: map[string]int64{}}
 	a := act("0xc8b9a30184244d427169cf62485dde6041b2b836", "", "BUY", "Yes", 50, 0.5, 1, "h")
-	p, err := BuildPlan(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0)
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +182,7 @@ func TestBuildPlanSkipsWhenSportsLookupFails(t *testing.T) {
 	acts := []polymarket.Activity{
 		act("0x1", "election", "BUY", "Yes", 100, 0.5, 1, "h"),
 	}
-	p, err := BuildPlan(context.Background(), failSports{}, s, acts, 0)
+	p, err := BuildPlanAt(context.Background(), failSports{}, s, acts, 0, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,12 +197,70 @@ func TestBuildPlanSkipsWhenSportsLookupFails(t *testing.T) {
 func TestCommitSentThenQuiet(t *testing.T) {
 	s := &State{Seeded: true, Seen: map[string]int64{}}
 	a := act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "Yes", 100, 0.5, 1, "h")
-	p, _ := BuildPlan(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0)
+	p, _ := BuildPlanAt(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0, testNow)
 	s.CommitDropped(p)
 	s.CommitSent(p.Alerts[0])
-	p2, _ := BuildPlan(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0)
+	p2, _ := BuildPlanAt(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0, testNow)
 	if len(p2.Alerts) != 0 {
 		t.Fatal("already sent")
+	}
+}
+
+func TestBuildPlanDropsStaleFills(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := &State{Seeded: true, Seen: map[string]int64{}}
+	w := "0xc8b9a30184244d427169cf62485dde6041b2b836"
+	old := act(w, "election", "BUY", "Yes", 500, 0.5, now.Add(-24*time.Hour).Unix(), "yesterday")
+	fresh := act(w, "election", "BUY", "No", 200, 0.4, now.Add(-2*time.Minute).Unix(), "now")
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, []polymarket.Activity{old, fresh}, 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Alerts) != 1 || p.Alerts[0].USDC != 200 || p.Alerts[0].Outcome != "No" {
+		t.Fatalf("want only the fresh fill: %+v", p.Alerts)
+	}
+	if p.Stale != 1 || len(p.DropKeys) != 1 || p.DropKeys[0] != polymarket.ActivityKey(old) {
+		t.Fatalf("yesterday should be dropped, got stale=%d drop=%v", p.Stale, p.DropKeys)
+	}
+	s.CommitDropped(p)
+	if !s.known(polymarket.ActivityKey(old)) {
+		t.Fatal("stale fill must be marked so it is not retried")
+	}
+}
+
+func TestBuildPlanDoesNotAggregateStaleWithFresh(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := &State{Seeded: true, Seen: map[string]int64{}}
+	w := "0xc8b9a30184244d427169cf62485dde6041b2b836"
+	old := act(w, "election", "BUY", "No", 40, 0.32, now.Add(-5*time.Hour).Unix(), "old")
+	fresh := act(w, "election", "BUY", "No", 70, 0.32, now.Add(-30*time.Second).Unix(), "new")
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, []polymarket.Activity{old, fresh}, 100, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Alerts) != 0 {
+		t.Fatalf("stale $40 must not combine with fresh $70: %+v", p.Alerts)
+	}
+	s.CommitDropped(p)
+	if !s.known(polymarket.ActivityKey(old)) {
+		t.Fatal("stale leftover should be dropped")
+	}
+	if s.known(polymarket.ActivityKey(fresh)) {
+		t.Fatal("fresh sub-min fill should stay unseen")
+	}
+}
+
+func TestBuildPlanAcceptsMillisecondTimestamps(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := &State{Seeded: true, Seen: map[string]int64{}}
+	ms := now.Add(-time.Minute).UnixMilli()
+	a := act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "Yes", 100, 0.5, ms, "ms")
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, []polymarket.Activity{a}, 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Alerts) != 1 {
+		t.Fatalf("recent ms timestamp should alert, got %+v", p)
 	}
 }
 
