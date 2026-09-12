@@ -1,26 +1,6 @@
-# Keep detectx_bot polling while this repo lives on GitHub.
-# GitHub Pages only serves the UI; this worker is the always-on process.
-#
-# Hosted runners die at ~6h. This workflow does not try to stay in one job:
-# it queues a successor ~25m before timeout, and a separate watchdog starts
-# a run only when nothing is already in progress or queued. Cron no longer
-# cancels a healthy bot (that was the overnight gap).
-#
-# One-time: repo Settings → Secrets and variables → Actions
-#   TELEGRAM_BOT_TOKEN   (required)
-#   TELEGRAM_CHAT_ID     (optional secret or Actions variable)
-#
-# Then merge to main. A push that touches the bot cancels the old job and
-# starts a new one so hang-fixes actually take effect. Send /start to
-# https://t.me/detectx_bot while a run is in progress if chat id is unset.
-# After the first bind, chat id is cached and written to the
-# TELEGRAM_CHAT_ID Actions variable so a cancel/restart does not wait
-# for another /start. If Telegram is silent after a restart, message
-# the bot once — pending /start updates are consumed by the previous run.
-#
-# Manual "Run workflow" replaces the live job by default. The watchdog and
-# the pre-timeout handoff pass force=false so they queue instead of killing.
-
+# detectx_bot no longer runs on GitHub Actions (hosted runners stop ~6h).
+# This stub stays so a merge to main cancels any leftover Actions bot via
+# concurrency, then exits. Do not add workflow_dispatch or a long-running job.
 name: Activity bot
 
 on:
@@ -28,129 +8,17 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/activity-bot.yml"
-      - "cmd/activity-bot/**"
-      - "internal/telegram/**"
-      - "internal/alert/**"
-      - "internal/sharps/**"
-      - "internal/polymarket/**"
-      - "go.mod"
-  workflow_dispatch:
-    inputs:
-      chat_id:
-        description: "Telegram chat id (skips waiting for /start)"
-        required: false
-        type: string
-      replay:
-        description: "Re-alert the current activity window instead of seeding quietly"
-        required: false
-        type: boolean
-        default: false
-      force:
-        description: "Cancel the running bot and take over now"
-        required: false
-        type: boolean
-        default: true
-
-permissions:
-  contents: read
-  actions: write
 
 concurrency:
   group: activity-bot
-  cancel-in-progress: ${{ github.event_name == 'push' || github.event.inputs.force == 'true' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  bot:
+  stop:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
-    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Restore checkpoint
-        uses: actions/cache@v4
-        with:
-          path: data/activity-bot-state.json
-          # Unique key so each run can save; restore-keys reuse the latest.
-          key: activity-bot-state-v2-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            activity-bot-state-v2-
-            activity-bot-state-v1
-          save-always: true
-
-      - name: Run
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || vars.TELEGRAM_CHAT_ID }}
-          DISPATCH_CHAT_ID: ${{ github.event.inputs.chat_id }}
-          REPLAY: ${{ github.event.inputs.replay }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          HANDOFF_REF: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
-            echo "Set repo secret TELEGRAM_BOT_TOKEN" >&2
-            exit 1
-          fi
-          chat="${DISPATCH_CHAT_ID:-}"
-          chat="${chat:-${TELEGRAM_CHAT_ID:-}}"
-          chat="$(printf '%s' "$chat" | tr -cd '0-9-')"
-          extra=()
-          if [ -n "$chat" ]; then
-            extra+=(-chat "$chat")
-          else
-            echo "No TELEGRAM_CHAT_ID (secret, variable, or dispatch input)." >&2
-            echo "If this is a restart, send any message to https://t.me/detectx_bot" >&2
-          fi
-          if [ "${REPLAY:-}" = "true" ]; then
-            extra+=(-replay)
-            echo "replay: will alert the current activity window" >&2
-          fi
-          mkdir -p data
-
-          persist_chat_id() {
-            local last=""
-            while true; do
-              sleep 20
-              [ -f data/activity-bot-state.json ] || continue
-              id="$(python3 -c 'import json; d=json.load(open("data/activity-bot-state.json")); print(d.get("chat_id") or "")' 2>/dev/null || true)"
-              case "$id" in
-                ''|0) continue ;;
-              esac
-              if [ "$id" = "$last" ]; then
-                continue
-              fi
-              if gh variable set TELEGRAM_CHAT_ID --body "$id"; then
-                echo "saved Actions variable TELEGRAM_CHAT_ID" >&2
-                last="$id"
-              fi
-            done
-          }
-          persist_chat_id &
-
-          queue_successor() {
-            # Job timeout is 355m. Queue ~25m early so the next run is already
-            # pending when this runner is killed; force=false keeps us alive
-            # until then (Telegram only allows one getUpdates client).
-            sleep $((330 * 60))
-            echo "handoff: queueing successor before runner timeout" >&2
-            if gh workflow run activity-bot.yml --ref "${HANDOFF_REF:-main}" -f force=false; then
-              echo "handoff: successor queued" >&2
-            else
-              echo "handoff: failed to queue successor" >&2
-            fi
-          }
-          queue_successor &
-
-          go build -o /tmp/activity-bot ./cmd/activity-bot
-          while true; do
-            /tmp/activity-bot -state data/activity-bot-state.json "${extra[@]}" || true
-            echo "bot exited, restarting in 5s" >&2
-            sleep 5
-          done
+      - run: echo "GitHub Actions bot disabled; leftover runs are cancelled by concurrency."
