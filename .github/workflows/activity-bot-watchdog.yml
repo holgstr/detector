@@ -1,0 +1,35 @@
+# Backup for detectx_bot if a hosted runner dies before it can hand off.
+# Does not cancel a healthy job — only starts Activity bot when nothing is
+# in progress or already queued.
+
+name: Activity bot watchdog
+
+on:
+  schedule:
+    # GitHub can delay cron; this only matters when the worker is already dead.
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Start bot if idle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          active="$(gh run list --workflow activity-bot.yml --limit 20 --json status --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "pending" or .status == "waiting" or .status == "requested")] | length')"
+          if [ "${active}" -gt 0 ]; then
+            echo "activity-bot already has ${active} run(s) in progress or queued"
+            exit 0
+          fi
+          echo "no live activity-bot run; starting one"
+          gh workflow run activity-bot.yml --ref main -f force=false
