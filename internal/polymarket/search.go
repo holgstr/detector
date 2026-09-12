@@ -221,6 +221,60 @@ func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 	return matched[0].hit, true
 }
 
+// TopRankMatches returns live markets sharing the best text-match rank for
+// query, sorted by 24h volume then total volume (same order as PickBestMarket).
+func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
+	toks := searchTokens(query)
+	if len(toks) == 0 || len(hits) == 0 {
+		return nil
+	}
+
+	type scored struct {
+		hit  SearchMarket
+		rank int
+	}
+	var matched []scored
+	bestRank := 0
+	for _, h := range hits {
+		if !isLiveMarket(h) || strings.TrimSpace(h.Market.ConditionID) == "" {
+			continue
+		}
+		rank := matchRank(h, toks)
+		if rank == 0 {
+			continue
+		}
+		if rank > bestRank {
+			bestRank = rank
+		}
+		matched = append(matched, scored{hit: h, rank: rank})
+	}
+	if bestRank == 0 {
+		return nil
+	}
+	top := make([]SearchMarket, 0, len(matched))
+	for _, m := range matched {
+		if m.rank == bestRank {
+			top = append(top, m.hit)
+		}
+	}
+	sort.SliceStable(top, func(i, j int) bool {
+		if top[i].Volume24hr != top[j].Volume24hr {
+			return top[i].Volume24hr > top[j].Volume24hr
+		}
+		if top[i].Volume != top[j].Volume {
+			return top[i].Volume > top[j].Volume
+		}
+		return top[i].Market.Question < top[j].Market.Question
+	})
+	return top
+}
+
+// IsExplicitMarketRef reports whether query is a condition id, market URL, or slug.
+func IsExplicitMarketRef(query string) bool {
+	query = strings.TrimSpace(query)
+	return isConditionID(query) || looksLikeMarketURL(query) || looksLikeSlug(query)
+}
+
 func isLiveMarket(h SearchMarket) bool {
 	return marketIsLive(h.Active, h.Closed, false)
 }

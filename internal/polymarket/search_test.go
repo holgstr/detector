@@ -60,6 +60,36 @@ func TestPickBestMarketAndersson(t *testing.T) {
 	}
 }
 
+func TestTopRankMatches(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market:         Market{ConditionID: "helene", Question: "Will Helene Andersson be the next Regional Board Chair?", Slug: "will-helene-andersson-be"},
+			GroupItemTitle: "Helene Andersson",
+			Volume24hr:     5000,
+			Active:         true,
+		},
+		{
+			Market:         Market{ConditionID: "magdalena", Question: "Will Magdalena Andersson be the next Prime Minister of Sweden?", Slug: "will-magdalena-andersson-be"},
+			GroupItemTitle: "Magdalena Andersson",
+			Volume24hr:     149789,
+			Active:         true,
+		},
+		{
+			Market:     Market{ConditionID: "event-only", Question: "Will someone else win?", Slug: "someone-else"},
+			EventTitle: "Andersson series",
+			Volume24hr: 8e9,
+			Active:     true,
+		},
+	}
+	top := TopRankMatches("Andersson", hits)
+	if len(top) != 2 {
+		t.Fatalf("want 2 top-rank hits, got %d %+v", len(top), top)
+	}
+	if top[0].Market.ConditionID != "magdalena" || top[1].Market.ConditionID != "helene" {
+		t.Fatalf("volume order: %+v", top)
+	}
+}
+
 func TestPickBestMarketEventTitleAndAnyTopic(t *testing.T) {
 	hits := []SearchMarket{
 		{
