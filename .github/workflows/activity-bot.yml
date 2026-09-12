@@ -1,6 +1,11 @@
 # Keep detectx_bot polling while this repo lives on GitHub.
 # GitHub Pages only serves the UI; this worker is the always-on process.
 #
+# Hosted runners die at ~6h. This workflow does not try to stay in one job:
+# it queues a successor ~25m before timeout, and a separate watchdog starts
+# a run only when nothing is already in progress or queued. Cron no longer
+# cancels a healthy bot (that was the overnight gap).
+#
 # One-time: repo Settings → Secrets and variables → Actions
 #   TELEGRAM_BOT_TOKEN   (required)
 #   TELEGRAM_CHAT_ID     (optional secret or Actions variable)
@@ -13,8 +18,8 @@
 # for another /start. If Telegram is silent after a restart, message
 # the bot once — pending /start updates are consumed by the previous run.
 #
-# Jobs last ~6h (runner cap). The schedule fires every 3h so GitHub delay
-# is less likely to leave a dead gap overnight.
+# Manual "Run workflow" replaces the live job by default. The watchdog and
+# the pre-timeout handoff pass force=false so they queue instead of killing.
 
 name: Activity bot
 
@@ -29,9 +34,6 @@ on:
       - "internal/sharps/**"
       - "internal/polymarket/**"
       - "go.mod"
-  schedule:
-    # Every 3h — well inside the 6h job limit so a delayed cron still overlaps.
-    - cron: "10 */3 * * *"
   workflow_dispatch:
     inputs:
       chat_id:
@@ -43,6 +45,11 @@ on:
         required: false
         type: boolean
         default: false
+      force:
+        description: "Cancel the running bot and take over now"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -50,7 +57,7 @@ permissions:
 
 concurrency:
   group: activity-bot
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event.inputs.force == 'true' }}
 
 jobs:
   bot:
@@ -84,6 +91,7 @@ jobs:
           REPLAY: ${{ github.event.inputs.replay }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          HANDOFF_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -125,6 +133,20 @@ jobs:
             done
           }
           persist_chat_id &
+
+          queue_successor() {
+            # Job timeout is 355m. Queue ~25m early so the next run is already
+            # pending when this runner is killed; force=false keeps us alive
+            # until then (Telegram only allows one getUpdates client).
+            sleep $((330 * 60))
+            echo "handoff: queueing successor before runner timeout" >&2
+            if gh workflow run activity-bot.yml --ref "${HANDOFF_REF:-main}" -f force=false; then
+              echo "handoff: successor queued" >&2
+            else
+              echo "handoff: failed to queue successor" >&2
+            fi
+          }
+          queue_successor &
 
           go build -o /tmp/activity-bot ./cmd/activity-bot
           while true; do
