@@ -187,6 +187,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 	if err := alert.SaveState(b.path, b.state); err != nil {
 		log.Printf("save state: %v", err)
 	}
+	if plan.Stale > 0 {
+		log.Printf("ignored %d fills older than %s", plan.Stale, alert.MaxAlertAge)
+	}
 	if plan.FirstRun {
 		n := len(b.state.Seen)
 		b.mu.Unlock()
