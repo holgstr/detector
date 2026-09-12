@@ -99,21 +99,78 @@ func TestFormatPosReport(t *testing.T) {
 }
 
 type fakePosAPI struct {
-	market polymarket.SearchMarket
-	pos    fakePositions
+	market      polymarket.SearchMarket
+	candidates  []polymarket.SearchMarket
+	pos         fakePositions
+	allPositions map[string][]polymarket.Position // wallet -> all positions (disambiguation)
 }
 
 func (f fakePosAPI) FindMarket(_ context.Context, _ string) (polymarket.SearchMarket, error) {
 	return f.market, nil
 }
 
+func (f fakePosAPI) SearchMarkets(_ context.Context, _ string) ([]polymarket.SearchMarket, error) {
+	if len(f.candidates) > 0 {
+		return f.candidates, nil
+	}
+	return []polymarket.SearchMarket{f.market}, nil
+}
+
 func (f fakePosAPI) FetchPositions(ctx context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	if f.allPositions != nil && strings.TrimSpace(opt.Market) == "" {
+		addr := strings.ToLower(opt.User)
+		if pos, ok := f.allPositions[addr]; ok {
+			return pos, nil
+		}
+		return nil, nil
+	}
 	return f.pos.FetchPositions(ctx, opt)
+}
+
+func TestPickMarketByTrackedPositions(t *testing.T) {
+	candidates := []polymarket.SearchMarket{
+		{Market: polymarket.Market{ConditionID: "0xhighvol", Question: "Will Flavio win Serie A?", Slug: "flavio-serie-a"}, Volume24hr: 500000, Active: true},
+		{Market: polymarket.Market{ConditionID: "0xheld", Question: "Will Flavio be next PM of Italy?", Slug: "flavio-pm"}, Volume24hr: 1000, Active: true},
+	}
+	api := fakePosAPI{
+		allPositions: map[string][]polymarket.Position{
+			"0xaaa": {{ConditionID: "0xheld", Outcome: "Yes", Size: 50}},
+			"0xbbb": {{ConditionID: "0xheld", Outcome: "No", Size: 20}},
+		},
+	}
+	got, err := pickMarketByTrackedPositions(context.Background(), api, candidates, []sharps.Wallet{
+		{Address: "0xaaa", Name: "Alice"},
+		{Address: "0xbbb", Name: "Bob"},
+	})
+	if err != nil || got.Market.ConditionID != "0xheld" {
+		t.Fatalf("want held market, got %+v err=%v", got, err)
+	}
+}
+
+func TestFetchPosReportPrefersTrackedMarket(t *testing.T) {
+	highVol := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xhighvol", Question: "Will Flavio win Serie A?"}, Volume24hr: 500000, Active: true}
+	held := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xheld", Question: "Will Flavio be next PM of Italy?"}, Volume24hr: 1000, Active: true}
+	api := fakePosAPI{
+		candidates: []polymarket.SearchMarket{highVol, held},
+		allPositions: map[string][]polymarket.Position{
+			"0xaaa": {{ConditionID: "0xheld", Outcome: "Yes", Size: 25}},
+		},
+		pos: fakePositions{
+			"0xaaa|0xheld": {{Outcome: "Yes", Size: 25}},
+		},
+	}
+	r, err := FetchPosReport(context.Background(), api, "Flavio", []sharps.Wallet{{Address: "0xAAA", Name: "Alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Title != "Will Flavio be next PM of Italy?" || len(r.Holdings) != 1 {
+		t.Fatalf("%+v", r)
+	}
 }
 
 func TestFetchPosReport(t *testing.T) {
 	api := fakePosAPI{
-		market: polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xabc", Question: "Will Magdalena Andersson win?"}},
+		market: polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xabc", Question: "Will Magdalena Andersson win?"}, Active: true},
 		pos: fakePositions{
 			"0xaaa|0xabc": {{Outcome: "Yes", Size: 25}},
 		},

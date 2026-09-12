@@ -18,6 +18,11 @@ type marketFinder interface {
 	FindMarket(ctx context.Context, query string) (polymarket.SearchMarket, error)
 }
 
+type posMarketAPI interface {
+	marketFinder
+	SearchMarkets(ctx context.Context, query string) ([]polymarket.SearchMarket, error)
+}
+
 // PosHolding is one tracked wallet's net shares in a market.
 type PosHolding struct {
 	Name    string
@@ -103,12 +108,118 @@ func BuildPosReport(query string, market polymarket.SearchMarket, wallets []shar
 	return rep
 }
 
+// resolvePosMarket picks a market for /pos. Explicit slugs, URLs, and condition
+// ids resolve directly; free-text queries prefer markets where tracked wallets
+// hold positions when several matches share the top text rank.
+func resolvePosMarket(ctx context.Context, api interface {
+	posMarketAPI
+	positionLookup
+}, query string, wallets []sharps.Wallet) (polymarket.SearchMarket, error) {
+	if polymarket.IsExplicitMarketRef(query) {
+		return api.FindMarket(ctx, query)
+	}
+	hits, err := api.SearchMarkets(ctx, query)
+	if err != nil {
+		return polymarket.SearchMarket{}, err
+	}
+	candidates := polymarket.TopRankMatches(query, hits)
+	if len(candidates) == 0 {
+		return polymarket.SearchMarket{}, fmt.Errorf("no active market matching %q", query)
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	return pickMarketByTrackedPositions(ctx, api, candidates, wallets)
+}
+
+func pickMarketByTrackedPositions(ctx context.Context, api positionLookup, candidates []polymarket.SearchMarket, wallets []sharps.Wallet) (polymarket.SearchMarket, error) {
+	if len(wallets) == 0 {
+		return candidates[0], nil
+	}
+
+	cidIndex := make(map[string]int, len(candidates))
+	for i, c := range candidates {
+		cid := strings.ToLower(strings.TrimSpace(c.Market.ConditionID))
+		cidIndex[cid] = i
+	}
+
+	type marketScore struct {
+		holders int
+		size    float64
+	}
+	scores := make([]marketScore, len(candidates))
+
+	type res struct {
+		pos []polymarket.Position
+	}
+	results := make(chan res, len(wallets))
+	var wg sync.WaitGroup
+	workers := 4
+	if workers > len(wallets) {
+		workers = len(wallets)
+	}
+	jobs := make(chan sharps.Wallet)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for w := range jobs {
+				pos, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{User: w.Address})
+				if err != nil {
+					results <- res{}
+					continue
+				}
+				results <- res{pos: pos}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, w := range wallets {
+			jobs <- w
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for r := range results {
+		byMarket := make(map[string][]polymarket.Position)
+		for _, p := range r.pos {
+			cid := strings.ToLower(strings.TrimSpace(p.ConditionID))
+			byMarket[cid] = append(byMarket[cid], p)
+		}
+		for cid, positions := range byMarket {
+			idx, ok := cidIndex[cid]
+			if !ok {
+				continue
+			}
+			np := polymarket.NetShares(positions)
+			if !np.Known || math.Abs(np.Size) < posShareEps || strings.TrimSpace(np.Outcome) == "" {
+				continue
+			}
+			scores[idx].holders++
+			scores[idx].size += math.Abs(np.Size)
+		}
+	}
+
+	bestIdx := 0
+	for i := 1; i < len(candidates); i++ {
+		if scores[i].holders > scores[bestIdx].holders ||
+			(scores[i].holders == scores[bestIdx].holders && scores[i].size > scores[bestIdx].size) {
+			bestIdx = i
+		}
+	}
+	return candidates[bestIdx], nil
+}
+
 // FetchPosReport finds the market and loads tracked wallets' open positions.
 func FetchPosReport(ctx context.Context, api interface {
-	marketFinder
+	posMarketAPI
 	positionLookup
 }, query string, wallets []sharps.Wallet) (PosReport, error) {
-	hit, err := api.FindMarket(ctx, query)
+	hit, err := resolvePosMarket(ctx, api, query, wallets)
 	if err != nil {
 		return PosReport{Query: query}, err
 	}

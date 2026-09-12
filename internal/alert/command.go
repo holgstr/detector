@@ -195,13 +195,13 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos Andersson — tracked holdings in an active (unresolved) market\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.
 func MinSizeStatus(minUSD float64) string {
 	if minUSD <= 0 {
-		return "Min size is off — every non-sports fill is sent. /minsize 100 to match the Activity tab."
+		return "Min size is off — every fill is sent. /minsize 100 to match the Activity tab."
 	}
 	return fmt.Sprintf("Min size is %s. Same-market same-direction fills are added up first, then this floor is applied. /minsize 0 to turn off.", formatUSD(minUSD))
 }
