@@ -46,6 +46,85 @@
   /** eventSlug → {icon, isSports}. Multi-outcome markets often omit market.icon. */
   const eventMetaCache = new Map();
 
+  const GAMES_TAG_ID = 100639;
+  const SPORTS_TAG_SLUGS = new Set([
+    "sports", "todays-sports", "nfl", "nba", "mlb", "nhl", "wnba", "ncaa", "ncaaw",
+    "cfb", "cbb", "soccer", "football", "ufc", "mma", "tennis", "atp", "wta", "golf",
+    "pga", "cricket", "esports", "formula1", "f1", "boxing", "boxingmma", "chess",
+    "olympics", "epl", "mls", "bundesliga", "serie-a", "la-liga", "laliga", "ligue-1",
+    "champions-league", "europa-league", "fantasy-football", "lol", "league-of-legends",
+    "counter-strike-2", "cs2", "csgo", "valorant", "wimbledon", "darts", "rugby",
+    "basketball", "baseball", "hockey", "march-madness", "ipl", "motogp", "nascar",
+    "bun", "lal", "fl1", "sea", "ucl", "uel", "ere", "ufl", "ahl", "cfl", "khl", "npb",
+    "kbo", "wsl", "t20", "odi", "nfl-gameday", "premier-league", "japan-j2-league",
+    "international-cricket",
+  ]);
+  const GAME_DATE_IN_SLUG = /(?:^|-)\d{4}-\d{2}-\d{2}(?:-|$)/;
+  const sportsTagIDs = new Set([1]);
+  const sportsCodes = new Set();
+  let sportsCatalogPromise = null;
+
+  function slugFirstToken(slug) {
+    const s = String(slug || "").trim().toLowerCase();
+    if (!s) return "";
+    const i = s.indexOf("-");
+    return i <= 0 ? s : s.slice(0, i);
+  }
+
+  function looksLikeSportsSlug(...slugs) {
+    for (const raw of slugs) {
+      const slug = String(raw || "").trim().toLowerCase();
+      if (!slug) continue;
+      const tok = slugFirstToken(slug);
+      if (!tok) continue;
+      if (SPORTS_TAG_SLUGS.has(tok)) return true;
+      if (
+        slug.startsWith("pro-football") ||
+        slug.startsWith("pro-basketball") ||
+        slug.startsWith("pro-baseball") ||
+        slug.startsWith("pro-hockey")
+      ) return true;
+      if (sportsCodes.has(tok) && GAME_DATE_IN_SLUG.test(slug)) return true;
+    }
+    return false;
+  }
+
+  function tagsAreSports(tags) {
+    if (!Array.isArray(tags)) return false;
+    for (const t of tags) {
+      const slug = String(t?.slug || "").trim().toLowerCase();
+      if (slug === "games" || slug === "all") continue;
+      if (SPORTS_TAG_SLUGS.has(slug) || sportsCodes.has(slug)) return true;
+      const id = Number(t?.id);
+      if (id && id !== GAMES_TAG_ID && sportsTagIDs.has(id)) return true;
+    }
+    return false;
+  }
+
+  function loadSportsCatalog(signal) {
+    if (sportsCatalogPromise) return sportsCatalogPromise;
+    sportsCatalogPromise = (async () => {
+      try {
+        const rows = await getJSON(`${GAMMA}/sports`, signal);
+        if (Array.isArray(rows)) {
+          for (const s of rows) {
+            const pid = Number(s?.primaryTagId);
+            if (pid && pid !== GAMES_TAG_ID) sportsTagIDs.add(pid);
+            const code = String(s?.sport || "").trim().toLowerCase();
+            if (code) sportsCodes.add(code);
+            for (const part of String(s?.tags || "").split(",")) {
+              const id = Number(part.trim());
+              if (id && id !== GAMES_TAG_ID) sportsTagIDs.add(id);
+            }
+          }
+        }
+      } catch {
+        sportsCatalogPromise = null;
+      }
+    })();
+    return sportsCatalogPromise;
+  }
+
   /** @type {Array<object>} */
   let portRows = [];
   let portSort = "currentValue";
@@ -171,23 +250,27 @@
   async function fetchEventMeta(eventSlug, signal) {
     if (!eventSlug) return { icon: "", isSports: false };
     if (eventMetaCache.has(eventSlug)) return eventMetaCache.get(eventSlug);
+    if (looksLikeSportsSlug(eventSlug)) {
+      const meta = { icon: "", isSports: true };
+      eventMetaCache.set(eventSlug, meta);
+      return meta;
+    }
     try {
       const data = await getJSON(`${GAMMA}/events?slug=${encodeURIComponent(eventSlug)}`, signal);
       const e = Array.isArray(data) ? data[0] : data;
       const icon = String(e?.icon || e?.image || "").trim();
       const tags = Array.isArray(e?.tags) ? e.tags : [];
-      const isSports = tags.some((t) => String(t?.slug || "").toLowerCase() === "sports");
+      const isSports = tagsAreSports(tags) || looksLikeSportsSlug(eventSlug);
       const meta = { icon, isSports };
-      eventMetaCache.set(eventSlug, meta);
+      if (isSports || tags.length) eventMetaCache.set(eventSlug, meta);
       return meta;
     } catch {
-      const meta = { icon: "", isSports: false };
-      eventMetaCache.set(eventSlug, meta);
-      return meta;
+      return { icon: "", isSports: looksLikeSportsSlug(eventSlug) };
     }
   }
 
   async function prefetchEventMeta(slugs, signal) {
+    await loadSportsCatalog(signal);
     const need = [...new Set(slugs.filter((s) => s && !eventMetaCache.has(s)))];
     if (!need.length) return;
     const conc = 6;
@@ -197,6 +280,7 @@
   }
 
   function isSportsItem(item) {
+    if (looksLikeSportsSlug(item?.eventSlug, item?.slug)) return true;
     const slug = item?.eventSlug;
     if (!slug) return false;
     const meta = eventMetaCache.get(slug);
