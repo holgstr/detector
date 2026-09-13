@@ -231,6 +231,10 @@ func BuildPlanAt(ctx context.Context, api sportsLookup, s *State, acts []polymar
 			stale++
 			continue
 		}
+		if polymarket.LooksLikeSportsSlug(a.EventSlug, a.Slug) {
+			drop = append(drop, key)
+			continue
+		}
 		sports, ok := isSports(a.EventSlug)
 		if !ok {
 			continue

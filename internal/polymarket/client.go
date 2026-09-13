@@ -29,6 +29,7 @@ type Client struct {
 
 	sportsMu     sync.Mutex
 	sportsTagIDs map[int]struct{}
+	sportsCodes  map[string]struct{}
 	sportsIDsOK  bool
 }
 

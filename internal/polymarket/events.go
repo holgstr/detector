@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -31,7 +32,9 @@ type eventTag struct {
 }
 
 type gammaSport struct {
-	PrimaryTagID int `json:"primaryTagId"`
+	Sport        string `json:"sport"`
+	PrimaryTagID int    `json:"primaryTagId"`
+	Tags         string `json:"tags"`
 }
 
 type sportsRelatedTag struct {
@@ -102,7 +105,33 @@ var sportsTagSlugs = map[string]struct{}{
 	"ipl":               {},
 	"motogp":            {},
 	"nascar":            {},
+	// Polymarket game event slugs use these league prefixes (bun-elv-bay-2026-09-13).
+	"bun":                   {},
+	"lal":                   {},
+	"fl1":                   {},
+	"sea":                   {},
+	"ucl":                   {},
+	"uel":                   {},
+	"ere":                   {},
+	"ufl":                   {},
+	"ahl":                   {},
+	"cfl":                   {},
+	"khl":                   {},
+	"npb":                   {},
+	"kbo":                   {},
+	"wsl":                   {},
+	"t20":                   {},
+	"odi":                   {},
+	"mlb-gameday":           {},
+	"nfl-gameday":           {},
+	"premier-league":        {},
+	"japan-j2-league":       {},
+	"international-cricket": {},
 }
+
+// gameDateInSlug matches Polymarket match slugs like epl-mun-mac-2026-09-13
+// and epl-mun-mac-2026-09-13-more-markets.
+var gameDateInSlug = regexp.MustCompile(`(?:^|-)\d{4}-\d{2}-\d{2}(?:-|$)`)
 
 func parseTagID(raw json.RawMessage) int {
 	if len(raw) == 0 {
@@ -120,7 +149,66 @@ func parseTagID(raw json.RawMessage) int {
 	return 0
 }
 
-func tagsAreSports(tags []eventTag, extraIDs map[int]struct{}) bool {
+func slugFirstToken(slug string) string {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if slug == "" {
+		return ""
+	}
+	i := strings.IndexByte(slug, '-')
+	if i <= 0 {
+		return slug
+	}
+	return slug[:i]
+}
+
+func addTagID(ids map[int]struct{}, id int) {
+	if id > 0 && id != gamesTagID {
+		ids[id] = struct{}{}
+	}
+}
+
+func parseSportsTagIDs(csv string, ids map[int]struct{}) {
+	for _, part := range strings.Split(csv, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err == nil {
+			addTagID(ids, n)
+		}
+	}
+}
+
+// LooksLikeSportsSlug is true when a Gamma event or market slug is a
+// sports league/game id (nfl-atl-pit-2026-09-13, epl-mun-mac-2026-09-13-more-markets).
+func LooksLikeSportsSlug(slugs ...string) bool {
+	return looksLikeSportsSlug(nil, slugs...)
+}
+
+func looksLikeSportsSlug(extraCodes map[string]struct{}, slugs ...string) bool {
+	for _, raw := range slugs {
+		slug := strings.ToLower(strings.TrimSpace(raw))
+		if slug == "" {
+			continue
+		}
+		tok := slugFirstToken(slug)
+		if tok == "" {
+			continue
+		}
+		if _, ok := sportsTagSlugs[tok]; ok {
+			return true
+		}
+		if strings.HasPrefix(slug, "pro-football") || strings.HasPrefix(slug, "pro-basketball") ||
+			strings.HasPrefix(slug, "pro-baseball") || strings.HasPrefix(slug, "pro-hockey") {
+			return true
+		}
+		if extraCodes != nil {
+			if _, ok := extraCodes[tok]; ok && gameDateInSlug.MatchString(slug) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func tagsAreSports(tags []eventTag, extraIDs map[int]struct{}, extraCodes map[string]struct{}) bool {
 	for _, t := range tags {
 		slug := strings.ToLower(strings.TrimSpace(t.Slug))
 		if slug == "games" || slug == "all" {
@@ -128,6 +216,11 @@ func tagsAreSports(tags []eventTag, extraIDs map[int]struct{}) bool {
 		}
 		if _, ok := sportsTagSlugs[slug]; ok {
 			return true
+		}
+		if extraCodes != nil {
+			if _, ok := extraCodes[slug]; ok {
+				return true
+			}
 		}
 		id := parseTagID(t.ID)
 		if id != 0 && id != gamesTagID {
@@ -139,44 +232,46 @@ func tagsAreSports(tags []eventTag, extraIDs map[int]struct{}) bool {
 	return false
 }
 
-func (c *Client) sportsCatalogIDs(ctx context.Context) map[int]struct{} {
+func (c *Client) sportsCatalog(ctx context.Context) (map[int]struct{}, map[string]struct{}) {
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 	c.sportsMu.Lock()
 	if c.sportsIDsOK {
-		ids := c.sportsTagIDs
+		ids, codes := c.sportsTagIDs, c.sportsCodes
 		c.sportsMu.Unlock()
-		return ids
+		return ids, codes
 	}
 	c.sportsMu.Unlock()
 
 	ids := map[int]struct{}{1: {}} // Gamma "sports" tag id
+	codes := map[string]struct{}{}
 	var sports []gammaSport
 	if err := c.getJSON(ctx, gammaBase+"/sports", &sports); err == nil {
 		for _, s := range sports {
-			if s.PrimaryTagID > 0 && s.PrimaryTagID != gamesTagID {
-				ids[s.PrimaryTagID] = struct{}{}
+			addTagID(ids, s.PrimaryTagID)
+			parseSportsTagIDs(s.Tags, ids)
+			if code := strings.ToLower(strings.TrimSpace(s.Sport)); code != "" {
+				codes[code] = struct{}{}
 			}
 		}
 	}
 	var related []sportsRelatedTag
 	if err := c.getJSON(ctx, gammaBase+"/tags/slug/sports/related-tags", &related); err == nil {
 		for _, r := range related {
-			if r.RelatedTagID > 0 && r.RelatedTagID != gamesTagID {
-				ids[r.RelatedTagID] = struct{}{}
-			}
+			addTagID(ids, r.RelatedTagID)
 		}
 	}
 
 	c.sportsMu.Lock()
 	if !c.sportsIDsOK {
 		c.sportsTagIDs = ids
+		c.sportsCodes = codes
 		c.sportsIDsOK = true
 	}
-	ids = c.sportsTagIDs
+	ids, codes = c.sportsTagIDs, c.sportsCodes
 	c.sportsMu.Unlock()
-	return ids
+	return ids, codes
 }
 
 // EventMeta looks up a Gamma event by slug. Results are cached on the client.
@@ -197,13 +292,21 @@ func (c *Client) EventMeta(ctx context.Context, eventSlug string) (EventMeta, er
 	}
 	c.eventMu.Unlock()
 
+	ids, codes := c.sportsCatalog(ctx)
+	if looksLikeSportsSlug(codes, slug) {
+		meta := EventMeta{Slug: slug, IsSports: true}
+		c.eventMu.Lock()
+		c.eventCache[slug] = meta
+		c.eventMu.Unlock()
+		return meta, nil
+	}
+
 	u := gammaBase + "/events?slug=" + url.QueryEscape(slug)
 	var events []gammaEvent
 	if err := c.getJSON(ctx, u, &events); err != nil {
 		return EventMeta{}, err
 	}
 
-	extra := c.sportsCatalogIDs(ctx)
 	meta := EventMeta{Slug: slug}
 	if len(events) > 0 {
 		e := events[0]
@@ -212,7 +315,13 @@ func (c *Client) EventMeta(ctx context.Context, eventSlug string) (EventMeta, er
 		if meta.Icon == "" {
 			meta.Icon = strings.TrimSpace(e.Image)
 		}
-		meta.IsSports = tagsAreSports(e.Tags, extra)
+		meta.IsSports = tagsAreSports(e.Tags, ids, codes)
+	}
+
+	// Don't cache "not sports" when Gamma returned no tags — a new match
+	// market can show up before league tags are attached.
+	if !meta.IsSports && (len(events) == 0 || (len(events) > 0 && len(events[0].Tags) == 0)) {
+		return meta, nil
 	}
 
 	c.eventMu.Lock()
@@ -221,8 +330,13 @@ func (c *Client) EventMeta(ctx context.Context, eventSlug string) (EventMeta, er
 	return meta, nil
 }
 
-// EventIsSports reports whether the event is sports (Gamma sports/league tags).
+// EventIsSports reports whether the event is sports (Gamma sports/league tags
+// or a sports game slug). Lookup failures return an error so callers can retry
+// instead of paging the fill.
 func (c *Client) EventIsSports(ctx context.Context, eventSlug string) (bool, error) {
+	if LooksLikeSportsSlug(eventSlug) {
+		return true, nil
+	}
 	meta, err := c.EventMeta(ctx, eventSlug)
 	if err != nil {
 		return false, err

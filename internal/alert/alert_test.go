@@ -250,6 +250,24 @@ func TestBuildPlanDoesNotAggregateStaleWithFresh(t *testing.T) {
 	}
 }
 
+func TestBuildPlanDropsSportsGameSlugWithoutGamma(t *testing.T) {
+	s := &State{Seeded: true, Seen: map[string]int64{}}
+	acts := []polymarket.Activity{
+		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "nfl-atl-pit-2026-09-13", "BUY", "Yes", 500, 0.5, 20, "nfl"),
+		act("0xc8b9a30184244d427169cf62485dde6041b2b836", "election", "BUY", "Yes", 200, 0.4, 22, "keep"),
+	}
+	p, err := BuildPlanAt(context.Background(), fakeSports{}, s, acts, 10, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Alerts) != 1 || p.Alerts[0].EventSlug != "election" {
+		t.Fatalf("alerts=%+v", p.Alerts)
+	}
+	if len(p.DropKeys) != 1 {
+		t.Fatalf("drop=%v", p.DropKeys)
+	}
+}
+
 func TestBuildPlanAcceptsMillisecondTimestamps(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	s := &State{Seeded: true, Seen: map[string]int64{}}

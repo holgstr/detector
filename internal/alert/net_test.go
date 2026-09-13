@@ -82,6 +82,17 @@ func TestBuildNetReportDropsSports(t *testing.T) {
 	}
 }
 
+func TestBuildNetReportHidesWhenSportsLookupFails(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	acts := []polymarket.Activity{
+		tradeAct(w.Address, "mA", "mystery-event", "BUY", "Yes", 50, 1, "1"),
+	}
+	r := BuildNetReport(context.Background(), failSports{}, acts, []sharps.Wallet{w}, time.Hour, 0, false)
+	if len(r.Traders) != 0 {
+		t.Fatalf("unknown events must not leak when Gamma is down: %+v", r.Traders)
+	}
+}
+
 func TestFormatNetReport(t *testing.T) {
 	chunks := FormatNetReport(NetReport{
 		Window: 6 * time.Hour,

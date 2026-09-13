@@ -84,12 +84,16 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 
 	sportsCache := make(map[string]bool)
 	failed := make(map[string]struct{})
-	isSports := func(slug string) bool {
+	isSports := func(eventSlug, marketSlug string) bool {
+		if polymarket.LooksLikeSportsSlug(eventSlug, marketSlug) {
+			return true
+		}
+		slug := eventSlug
 		if slug == "" {
 			return false
 		}
 		if _, ok := failed[slug]; ok {
-			return false
+			return true // Gamma down: hide rather than leak sports
 		}
 		if v, ok := sportsCache[slug]; ok {
 			return v
@@ -101,7 +105,7 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 		v, err := api.EventIsSports(ctx, slug)
 		if err != nil {
 			failed[slug] = struct{}{}
-			return false
+			return true
 		}
 		sportsCache[slug] = v
 		return v
@@ -121,7 +125,7 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 		if since > 0 && a.Timestamp < since {
 			continue
 		}
-		if isSports(a.EventSlug) {
+		if isSports(a.EventSlug, a.Slug) {
 			continue
 		}
 		w := strings.ToLower(strings.TrimSpace(a.ProxyWallet))
