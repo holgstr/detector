@@ -11,6 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
+// /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
 
 import (
@@ -42,6 +43,7 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "Print alerts to stdout instead of Telegram")
 	once := flag.Bool("once", false, "Single poll then exit")
 	replay := flag.Bool("replay", false, "Alert the current window instead of seeding quietly on first run")
+	announceUpdate := flag.String("announce-update", "", "Internal: SHA to report after a /update restart")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -66,6 +68,7 @@ func main() {
 		state:       state,
 		path:        *statePath,
 		fallbackMin: *minUSD,
+		announce:    strings.TrimSpace(*announceUpdate),
 	}
 
 	client := polymarket.NewClient()
@@ -100,6 +103,12 @@ func main() {
 			log.Fatalf("telegram: %v", err)
 		}
 		log.Printf("chat %d bound; min size %s", b.chatID(), formatMin(b.minUSD()))
+		if b.announce != "" {
+			msg := fmt.Sprintf("Now running %s from GitHub.", shortSHA(b.announce))
+			if err := tg.SendMessage(ctx, b.chatID(), msg); err != nil {
+				log.Printf("announce update: %v", err)
+			}
+		}
 	}
 
 	poll := func() error {
@@ -128,6 +137,7 @@ type bot struct {
 	path        string
 	fallbackMin float64
 	quietPolls  int
+	announce    string
 }
 
 func (b *bot) minUSD() float64 {
@@ -313,6 +323,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdPos {
 		replyPos(ctx, tg, api, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdUpdate {
+		replyUpdate(ctx, tg, chatID)
+	}
 }
 
 func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
@@ -336,8 +349,50 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
+}
+
+func replyUpdate(ctx context.Context, tg *telegram.Client, chatID int64) {
+	if !tryBeginUpdate() {
+		if err := tg.SendMessage(ctx, chatID, "An update is already running."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	defer endUpdate()
+
+	if err := tg.SendMessage(ctx, chatID, "Pulling origin/main from GitHub…"); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	workCtx, cancel := context.WithTimeout(ctx, updateTimeout)
+	res, err := prepareUpdate(workCtx)
+	cancel()
+	if err != nil {
+		if sendErr := tg.SendMessage(ctx, chatID, "Update failed: "+clipErr(err)); sendErr != nil {
+			log.Printf("reply: %v", sendErr)
+		}
+		log.Printf("update: %v", err)
+		return
+	}
+	if !res.Changed {
+		msg := fmt.Sprintf("Already on %s. Nothing to pull.", shortSHA(res.To))
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	msg := fmt.Sprintf("Restarting on %s…", shortSHA(res.To))
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("update %s -> %s; exec %s", shortSHA(res.From), shortSHA(res.To), res.Bin)
+	if err := restartWithBinary(res.Bin, res.To); err != nil {
+		if sendErr := tg.SendMessage(ctx, chatID, "Restart failed (still on the old process): "+clipErr(err)); sendErr != nil {
+			log.Printf("reply: %v", sendErr)
+		}
+		log.Printf("exec: %v", err)
+	}
 }
 
 func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {

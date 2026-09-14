@@ -74,6 +74,16 @@ func TestParseCommand(t *testing.T) {
 	if got.Cmd != CmdPos || got.Market != "" {
 		t.Fatalf("pos empty %+v", got)
 	}
+
+	if ParseCommand("/update").Cmd != CmdUpdate {
+		t.Fatal("update")
+	}
+	if ParseCommand("/update@detectx_bot").Cmd != CmdUpdate {
+		t.Fatal("update mention")
+	}
+	if ParseCommand("/pull").Cmd != CmdUpdate {
+		t.Fatal("pull alias")
+	}
 }
 
 func TestEffectiveMinUSD(t *testing.T) {
