@@ -11,6 +11,10 @@ import (
 )
 
 func tradeAct(wallet, market, slug, side, outcome string, size float64, ts int64, hash string) polymarket.Activity {
+	return tradeActPx(wallet, market, slug, side, outcome, size, 0, ts, hash)
+}
+
+func tradeActPx(wallet, market, slug, side, outcome string, size, price float64, ts int64, hash string) polymarket.Activity {
 	return polymarket.Activity{
 		ProxyWallet:     wallet,
 		ConditionID:     market,
@@ -20,6 +24,8 @@ func tradeAct(wallet, market, slug, side, outcome string, size float64, ts int64
 		Side:            side,
 		Outcome:         outcome,
 		Size:            size,
+		Price:           price,
+		USDCSize:        size * price,
 		Timestamp:       ts,
 		TransactionHash: hash,
 		Asset:           "tok",
@@ -93,6 +99,77 @@ func TestBuildNetReportHidesWhenSportsLookupFails(t *testing.T) {
 	}
 }
 
+func TestBuildNetReportEffectiveAvgYesOnly(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	acts := []polymarket.Activity{
+		tradeActPx(w.Address, "mA", "alpha", "BUY", "Yes", 10, 0.40, 1, "1"),
+		tradeActPx(w.Address, "mA", "alpha", "BUY", "Yes", 10, 0.60, 2, "2"),
+	}
+	r := BuildNetReport(context.Background(), fakeSports{}, acts, []sharps.Wallet{w}, time.Hour, 0, false)
+	if len(r.Traders) != 1 || len(r.Traders[0].Markets) != 1 {
+		t.Fatalf("%+v", r.Traders)
+	}
+	m := r.Traders[0].Markets[0]
+	if m.Outcome != "YES" || m.Size != 20 || !m.HasAvg || m.AvgPrice != 0.50 {
+		t.Fatalf("got %+v want +20 YES @ 0.50", m)
+	}
+}
+
+func TestBuildNetReportEffectiveAvgHedge(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	// 100 YES @ 0.55 and 40 NO @ 0.40 → leftover 60 YES at (55+16-40)/60 = 0.5166…
+	acts := []polymarket.Activity{
+		tradeActPx(w.Address, "mA", "alpha", "BUY", "Yes", 100, 0.55, 1, "1"),
+		tradeActPx(w.Address, "mA", "alpha", "BUY", "No", 40, 0.40, 2, "2"),
+	}
+	r := BuildNetReport(context.Background(), fakeSports{}, acts, []sharps.Wallet{w}, time.Hour, 0, false)
+	if len(r.Traders) != 1 || len(r.Traders[0].Markets) != 1 {
+		t.Fatalf("%+v", r.Traders)
+	}
+	m := r.Traders[0].Markets[0]
+	want := (55.0 + 16.0 - 40.0) / 60.0
+	if m.Outcome != "YES" || m.Size != 60 || !m.HasAvg || abs(m.AvgPrice-want) > 1e-9 {
+		t.Fatalf("got %+v want +60 YES @ %v", m, want)
+	}
+}
+
+func TestBuildNetReportEffectiveAvgNetNo(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	acts := []polymarket.Activity{
+		tradeActPx(w.Address, "mA", "alpha", "BUY", "No", 80, 0.30, 1, "1"),
+		tradeActPx(w.Address, "mA", "alpha", "BUY", "Yes", 20, 0.80, 2, "2"),
+	}
+	r := BuildNetReport(context.Background(), fakeSports{}, acts, []sharps.Wallet{w}, time.Hour, 0, false)
+	if len(r.Traders) != 1 || len(r.Traders[0].Markets) != 1 {
+		t.Fatalf("%+v", r.Traders)
+	}
+	m := r.Traders[0].Markets[0]
+	// leftover 60 NO at (24+16-20)/60 = 0.333…
+	want := (24.0 + 16.0 - 20.0) / 60.0
+	if m.Outcome != "NO" || m.Size != 60 || !m.HasAvg || abs(m.AvgPrice-want) > 1e-9 {
+		t.Fatalf("got %+v want +60 NO @ %v", m, want)
+	}
+}
+
+func TestBuildNetReportOmitsAvgWithoutPrices(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	acts := []polymarket.Activity{
+		tradeAct(w.Address, "mA", "alpha", "BUY", "Yes", 10, 1, "1"),
+	}
+	r := BuildNetReport(context.Background(), fakeSports{}, acts, []sharps.Wallet{w}, time.Hour, 0, false)
+	m := r.Traders[0].Markets[0]
+	if m.HasAvg {
+		t.Fatalf("no fill prices → no avg: %+v", m)
+	}
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 func TestFormatNetReport(t *testing.T) {
 	chunks := FormatNetReport(NetReport{
 		Window: 6 * time.Hour,
@@ -112,6 +189,19 @@ func TestFormatNetReport(t *testing.T) {
 	}
 	if !strings.Contains(got, "+10 YES  Fed decision?") {
 		t.Fatalf("line: %s", got)
+	}
+
+	priced := FormatNetReport(NetReport{
+		Window: 6 * time.Hour,
+		Traders: []TraderDelta{{
+			Name: "SnowLover7",
+			Markets: []MarketDelta{
+				{Title: "Fed decision?", Size: 10, Outcome: "YES", AvgPrice: 0.42, HasAvg: true},
+			},
+		}},
+	}, "")
+	if !strings.Contains(priced[0], "+10 YES  Fed decision? @ 42c") {
+		t.Fatalf("priced line: %s", priced[0])
 	}
 
 	empty := FormatNetReport(NetReport{Window: 24 * time.Hour}, "")
