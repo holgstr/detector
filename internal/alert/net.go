@@ -26,10 +26,12 @@ type activitySinceLookup interface {
 
 // MarketDelta is the signed net-share change in one market over a window.
 type MarketDelta struct {
-	Title   string
-	Slug    string
-	Size    float64
-	Outcome string
+	Title    string
+	Slug     string
+	Size     float64
+	Outcome  string
+	AvgPrice float64 // effective acquisition of the remaining net; 0 if unknown
+	HasAvg   bool
 }
 
 // TraderDelta is one wallet's non-zero market nets.
@@ -71,6 +73,7 @@ func ResolveNetWallets(query string) ([]sharps.Wallet, string) {
 
 // BuildNetReport sums BUY/SELL Yes−No per market in [since, now] and drops
 // markets whose net exposure did not move (buy 30 Y / sell 30 Y → omitted).
+// AvgPrice is the merge-adjusted cost of the leftover net (No @ p ≡ selling Yes @ 1−p).
 func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Activity, wallets []sharps.Wallet, window time.Duration, since int64, truncated bool) NetReport {
 	report := NetReport{Window: window, Since: since, Truncated: truncated}
 	if len(acts) == 0 {
@@ -113,12 +116,15 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 
 	type mkey struct{ wallet, market string }
 	type acc struct {
-		title    string
-		slug     string
-		event    string
-		yes, no  float64
-		other    map[string]float64
-		otherOut string
+		title           string
+		slug            string
+		event           string
+		yes, no         float64
+		yesCash, noCash float64
+		other           map[string]float64
+		otherCash       map[string]float64
+		otherOut        string
+		hasPrice        bool
 	}
 	grouped := make(map[mkey]*acc)
 	for _, a := range acts {
@@ -142,7 +148,7 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 		k := mkey{wallet: w, market: cid}
 		row := grouped[k]
 		if row == nil {
-			row = &acc{other: make(map[string]float64)}
+			row = &acc{other: make(map[string]float64), otherCash: make(map[string]float64)}
 			grouped[k] = row
 		}
 		if a.Title != "" {
@@ -156,17 +162,25 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 		if strings.EqualFold(strings.TrimSpace(a.Side), "SELL") {
 			signed = -signed
 		}
+		px := fillPrice(a)
+		if px != 0 || a.USDCSize != 0 {
+			row.hasPrice = true
+		}
+		cash := signed * px
 		switch parseYesNo(a.Outcome) {
 		case "yes":
 			row.yes += signed
+			row.yesCash += cash
 		case "no":
 			row.no += signed
+			row.noCash += cash
 		default:
 			out := strings.TrimSpace(a.Outcome)
 			if out == "" {
 				out = "—"
 			}
 			row.other[out] += signed
+			row.otherCash[out] += cash
 			if math.Abs(row.other[out]) >= math.Abs(row.other[row.otherOut]) {
 				row.otherOut = out
 			}
@@ -185,6 +199,10 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 				md.Size = -net
 				md.Outcome = "NO"
 			}
+			if avg, ok := effectiveNetAvg(row.yes, row.no, row.yesCash, row.noCash); ok && row.hasPrice {
+				md.AvgPrice = avg
+				md.HasAvg = true
+			}
 			byWallet[k.wallet] = append(byWallet[k.wallet], md)
 			continue
 		}
@@ -195,6 +213,10 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 			md := MarketDelta{Title: row.title, Slug: row.slug, Size: math.Abs(v), Outcome: strings.ToUpper(out)}
 			if v < 0 {
 				md.Size = -md.Size
+			}
+			if row.hasPrice && v != 0 {
+				md.AvgPrice = row.otherCash[out] / v
+				md.HasAvg = true
 			}
 			byWallet[k.wallet] = append(byWallet[k.wallet], md)
 		}
@@ -218,6 +240,36 @@ func BuildNetReport(ctx context.Context, api sportsLookup, acts []polymarket.Act
 	}
 	report.Traders = traders
 	return report
+}
+
+func fillPrice(a polymarket.Activity) float64 {
+	if a.Price != 0 {
+		return a.Price
+	}
+	if a.Size != 0 && a.USDCSize != 0 {
+		return a.USDCSize / a.Size
+	}
+	return 0
+}
+
+// effectiveNetAvg is the merge-adjusted cost of leftover Yes or No.
+// Buying No at p is treated as selling Yes at 1−p (a complete set is $1).
+func effectiveNetAvg(yes, no, yesCash, noCash float64) (float64, bool) {
+	net := yes - no
+	if math.Abs(net) < netShareEps {
+		return 0, false
+	}
+	cash := yesCash + noCash
+	var avg float64
+	if net > 0 {
+		avg = (cash - no) / net
+	} else {
+		avg = (cash - yes) / -net
+	}
+	if math.IsNaN(avg) || math.IsInf(avg, 0) {
+		return 0, false
+	}
+	return avg, true
 }
 
 func parseYesNo(outcome string) string {
@@ -296,7 +348,11 @@ func FormatNetReport(r NetReport, query string) []string {
 				sign = "-"
 				size = -size
 			}
-			fmt.Fprintf(&b, "\n%s%s %s  %s", sign, formatShares(size), m.Outcome, title)
+			if m.HasAvg {
+				fmt.Fprintf(&b, "\n%s%s %s @ %s  %s", sign, formatShares(size), m.Outcome, formatCents(m.AvgPrice), title)
+			} else {
+				fmt.Fprintf(&b, "\n%s%s %s  %s", sign, formatShares(size), m.Outcome, title)
+			}
 		}
 		blocks = append(blocks, b.String())
 	}

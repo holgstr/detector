@@ -336,7 +336,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes.\n/pos <market> for tracked holdings.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
 }
 
