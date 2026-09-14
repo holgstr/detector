@@ -349,7 +349,7 @@ func FormatNetReport(r NetReport, query string) []string {
 				size = -size
 			}
 			if m.HasAvg {
-				fmt.Fprintf(&b, "\n%s%s %s @ %s  %s", sign, formatShares(size), m.Outcome, formatCents(m.AvgPrice), title)
+				fmt.Fprintf(&b, "\n%s%s %s  %s @ %s", sign, formatShares(size), m.Outcome, title, formatCents(m.AvgPrice))
 			} else {
 				fmt.Fprintf(&b, "\n%s%s %s  %s", sign, formatShares(size), m.Outcome, title)
 			}

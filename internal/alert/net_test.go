@@ -200,7 +200,7 @@ func TestFormatNetReport(t *testing.T) {
 			},
 		}},
 	}, "")
-	if !strings.Contains(priced[0], "+10 YES @ 42c  Fed decision?") {
+	if !strings.Contains(priced[0], "+10 YES  Fed decision? @ 42c") {
 		t.Fatalf("priced line: %s", priced[0])
 	}
 
