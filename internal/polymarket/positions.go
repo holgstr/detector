@@ -27,10 +27,12 @@ type Position struct {
 
 // FetchPositionsOptions filters a wallet's open positions.
 type FetchPositionsOptions struct {
-	User   string
-	Market string // condition ID; empty = all markets
-	Limit  int    // default 50, max 500
-	Offset int    // skip this many rows (page through a full book)
+	User          string
+	Market        string // condition ID; empty = all markets
+	Limit         int    // default 50, max 500
+	Offset        int    // skip this many rows (page through a full book)
+	SortBy        string // e.g. CURRENT; empty = API default
+	SortDirection string // ASC or DESC
 }
 
 // FetchPositions returns open positions for a wallet from /positions.
@@ -56,6 +58,12 @@ func (c *Client) FetchPositions(ctx context.Context, opt FetchPositionsOptions) 
 	}
 	if m := strings.TrimSpace(opt.Market); m != "" {
 		q.Set("market", m)
+	}
+	if s := strings.TrimSpace(opt.SortBy); s != "" {
+		q.Set("sortBy", s)
+	}
+	if s := strings.TrimSpace(opt.SortDirection); s != "" {
+		q.Set("sortDirection", s)
 	}
 
 	var out []Position
