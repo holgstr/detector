@@ -14,6 +14,7 @@ import (
 const (
 	portPageSize  = 500
 	portMaxOffset = 5000
+	portMinUSD    = 100
 )
 
 // PortHolding is one market's leftover net for /port.
@@ -39,7 +40,7 @@ type PortReport struct {
 }
 
 // PortUsage is the reply when /port has no trader (or "all").
-const PortUsage = "Usage: /port <trader> — open non-sports nets, shares sorted by market value."
+const PortUsage = "Usage: /port <trader> — open non-sports nets of $100+, shares sorted by market value."
 
 // ResolvePortWallet requires exactly one tracked trader.
 func ResolvePortWallet(query string) (sharps.Wallet, string) {
@@ -252,9 +253,20 @@ func dropSportsHoldings(ctx context.Context, api sportsLookup, holdings []PortHo
 	return keep
 }
 
-// BuildPortReport nets, drops sports/flats, and sorts leftover size by market value.
+func dropSmallHoldings(holdings []PortHolding) []PortHolding {
+	var keep []PortHolding
+	for _, h := range holdings {
+		if h.MarketValue < portMinUSD {
+			continue
+		}
+		keep = append(keep, h)
+	}
+	return keep
+}
+
+// BuildPortReport nets, drops sports/flats/sub-$100 value, and sorts leftover size by market value.
 func BuildPortReport(ctx context.Context, api sportsLookup, w sharps.Wallet, positions []polymarket.Position, truncated bool) PortReport {
-	holdings := dropSportsHoldings(ctx, api, NetPortHoldings(positions))
+	holdings := dropSmallHoldings(dropSportsHoldings(ctx, api, NetPortHoldings(positions)))
 	sort.SliceStable(holdings, func(i, j int) bool {
 		if holdings[i].MarketValue != holdings[j].MarketValue {
 			return holdings[i].MarketValue > holdings[j].MarketValue
@@ -316,7 +328,7 @@ func FormatPortReport(r PortReport) []string {
 		head += "\n(Position book truncated — some small holdings may be missing.)"
 	}
 	if len(r.Holdings) == 0 {
-		return []string{head + "\nNo open non-sports holdings."}
+		return []string{head + "\nNo open non-sports holdings of $100+."}
 	}
 
 	var blocks []string

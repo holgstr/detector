@@ -74,6 +74,19 @@ func TestBuildPortReportSortsByMarketValueDropsSports(t *testing.T) {
 	}
 }
 
+func TestBuildPortReportDropsSub100Value(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	pos := []polymarket.Position{
+		{ConditionID: "keep", Title: "Keep", Outcome: "Yes", Size: 200, AvgPrice: 0.50, CurPrice: 0.50},   // $100
+		{ConditionID: "drop", Title: "Drop", Outcome: "Yes", Size: 199.8, AvgPrice: 0.50, CurPrice: 0.50}, // $99.90
+		{ConditionID: "nopx", Title: "NoPx", Outcome: "Yes", Size: 5000, AvgPrice: 0.40},                   // no live px
+	}
+	r := BuildPortReport(context.Background(), fakeSports{}, w, pos, false)
+	if len(r.Holdings) != 1 || r.Holdings[0].Title != "Keep" {
+		t.Fatalf("want only $100+ Keep, got %+v", r.Holdings)
+	}
+}
+
 func TestBuildPortReportHidesWhenSportsLookupFails(t *testing.T) {
 	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
 	pos := []polymarket.Position{
@@ -108,7 +121,7 @@ func TestFormatPortReport(t *testing.T) {
 	}
 
 	empty := FormatPortReport(PortReport{Name: "Alice"})
-	if len(empty) != 1 || !strings.Contains(empty[0], "No open non-sports holdings") {
+	if len(empty) != 1 || !strings.Contains(empty[0], "No open non-sports holdings of $100+") {
 		t.Fatalf("%v", empty)
 	}
 }
@@ -134,7 +147,7 @@ func TestFetchPortReport(t *testing.T) {
 	api := fakePortAPI{
 		pos: map[string][]polymarket.Position{
 			"0xaaa": {
-				{ConditionID: "a", Title: "Market A", Outcome: "Yes", Size: 25, AvgPrice: 0.40, CurPrice: 0.50},
+				{ConditionID: "a", Title: "Market A", Outcome: "Yes", Size: 250, AvgPrice: 0.40, CurPrice: 0.50},
 				{ConditionID: "s", Title: "Game", EventSlug: "nba", Slug: "nba-foo", Outcome: "Yes", Size: 100, AvgPrice: 0.5, CurPrice: 0.5},
 			},
 		},
@@ -143,7 +156,7 @@ func TestFetchPortReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Holdings) != 1 || r.Holdings[0].Title != "Market A" || r.Holdings[0].Size != 25 {
+	if len(r.Holdings) != 1 || r.Holdings[0].Title != "Market A" || r.Holdings[0].Size != 250 {
 		t.Fatalf("%+v", r)
 	}
 }
