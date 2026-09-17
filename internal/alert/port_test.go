@@ -2,7 +2,10 @@ package alert
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/holgstr/detector/internal/polymarket"
@@ -136,7 +139,16 @@ func (f fakePortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPosit
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.pos[strings.ToLower(opt.User)], nil
+	rows := f.pos[strings.ToLower(opt.User)]
+	start := opt.Offset
+	if start >= len(rows) {
+		return nil, nil
+	}
+	end := start + opt.Limit
+	if opt.Limit <= 0 || end > len(rows) {
+		end = len(rows)
+	}
+	return rows[start:end], nil
 }
 
 func (f fakePortAPI) EventIsSports(_ context.Context, slug string) (bool, error) {
@@ -158,5 +170,168 @@ func TestFetchPortReport(t *testing.T) {
 	}
 	if len(r.Holdings) != 1 || r.Holdings[0].Title != "Market A" || r.Holdings[0].Size != 250 {
 		t.Fatalf("%+v", r)
+	}
+}
+
+type pagingPortAPI struct {
+	mu      sync.Mutex
+	rows    []polymarket.Position
+	offsets []int
+	sortBy  string
+	sortDir string
+}
+
+func (p *pagingPortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	p.mu.Lock()
+	p.offsets = append(p.offsets, opt.Offset)
+	p.sortBy = opt.SortBy
+	p.sortDir = opt.SortDirection
+	p.mu.Unlock()
+	start := opt.Offset
+	if start >= len(p.rows) {
+		return nil, nil
+	}
+	end := start + opt.Limit
+	if opt.Limit <= 0 || end > len(p.rows) {
+		end = len(p.rows)
+	}
+	out := make([]polymarket.Position, end-start)
+	copy(out, p.rows[start:end])
+	return out, nil
+}
+
+func (p *pagingPortAPI) EventIsSports(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func TestFetchPortReportOnePage(t *testing.T) {
+	api := &pagingPortAPI{
+		rows: []polymarket.Position{
+			{ConditionID: "a", Title: "A", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+		},
+	}
+	r, err := FetchPortReport(context.Background(), api, sharps.Wallet{Address: "0xaaa", Name: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Holdings) != 1 {
+		t.Fatalf("%+v", r)
+	}
+	if len(api.offsets) != 1 || api.offsets[0] != 0 {
+		t.Fatalf("offsets=%v (small books should be one request)", api.offsets)
+	}
+	if api.sortBy != "CURRENT" || api.sortDir != "DESC" {
+		t.Fatalf("sort %s %s", api.sortBy, api.sortDir)
+	}
+}
+
+func TestFetchPortReportPagesInParallel(t *testing.T) {
+	rows := make([]polymarket.Position, portPageSize+150)
+	for i := range rows {
+		rows[i] = polymarket.Position{
+			ConditionID: fmt.Sprintf("c%d", i),
+			Title:       fmt.Sprintf("M%d", i),
+			Outcome:     "Yes",
+			Size:        10,
+			CurPrice:    0.5,
+		}
+	}
+	api := &pagingPortAPI{rows: rows}
+	r, err := FetchPortReport(context.Background(), api, sharps.Wallet{Address: "0xaaa", Name: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Holdings) != len(rows) {
+		t.Fatalf("holdings=%d want %d", len(r.Holdings), len(rows))
+	}
+	if r.Truncated {
+		t.Fatal("short last page should not truncate")
+	}
+	got := map[int]int{}
+	for _, off := range api.offsets {
+		got[off]++
+	}
+	if got[0] != 1 {
+		t.Fatalf("first page calls=%d offsets=%v", got[0], api.offsets)
+	}
+	for off := portPageSize; off < portMaxOffset; off += portPageSize {
+		if got[off] != 1 {
+			t.Fatalf("missing parallel page %d: %v", off, api.offsets)
+		}
+	}
+	if len(api.offsets) != portMaxOffset/portPageSize {
+		t.Fatalf("want %d page fetches, got %d %v", portMaxOffset/portPageSize, len(api.offsets), api.offsets)
+	}
+}
+
+type fullBookPortAPI struct {
+	calls atomic.Int32
+}
+
+func (f *fullBookPortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	f.calls.Add(1)
+	out := make([]polymarket.Position, portPageSize)
+	for i := range out {
+		out[i] = polymarket.Position{
+			ConditionID: fmt.Sprintf("%d-%d", opt.Offset, i),
+			Title:       "M",
+			Outcome:     "Yes",
+			Size:        3,
+			CurPrice:    0.4,
+		}
+	}
+	return out, nil
+}
+
+func (f *fullBookPortAPI) EventIsSports(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func TestFetchPortReportTruncated(t *testing.T) {
+	api := &fullBookPortAPI{}
+	r, err := FetchPortReport(context.Background(), api, sharps.Wallet{Address: "0xaaa", Name: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Truncated {
+		t.Fatal("expected truncated")
+	}
+	if len(r.Holdings) != portMaxOffset {
+		t.Fatalf("holdings=%d", len(r.Holdings))
+	}
+	if api.calls.Load() != int32(portMaxOffset/portPageSize) {
+		t.Fatalf("calls=%d", api.calls.Load())
+	}
+}
+
+type countingSportsAPI struct {
+	lookups atomic.Int32
+}
+
+func (c *countingSportsAPI) FetchPositions(context.Context, polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	return []polymarket.Position{
+		{ConditionID: "a", Title: "A", EventSlug: "event-a", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+		{ConditionID: "b", Title: "B", EventSlug: "event-b", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+		{ConditionID: "c", Title: "C", EventSlug: "event-a", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+		{ConditionID: "d", Title: "D", EventSlug: "nfl-atl-pit-2026-09-13", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+	}, nil
+}
+
+func (c *countingSportsAPI) EventIsSports(_ context.Context, slug string) (bool, error) {
+	c.lookups.Add(1)
+	return slug == "event-b", nil
+}
+
+func TestFetchPortReportSportsLookupsDeduped(t *testing.T) {
+	api := &countingSportsAPI{}
+	r, err := FetchPortReport(context.Background(), api, sharps.Wallet{Address: "0xaaa", Name: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.lookups.Load() != 2 {
+		t.Fatalf("lookups=%d want 2 unique non-sports-looking slugs", api.lookups.Load())
+	}
+	if len(r.Holdings) != 2 {
+		t.Fatalf("holdings=%v", r.Holdings)
 	}
 }

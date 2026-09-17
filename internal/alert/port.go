@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/holgstr/detector/internal/polymarket"
 	"github.com/holgstr/detector/internal/sharps"
@@ -217,35 +218,68 @@ func firstNonEmpty(vals ...string) string {
 func dropSportsHoldings(ctx context.Context, api sportsLookup, holdings []PortHolding) []PortHolding {
 	sportsCache := make(map[string]bool)
 	failed := make(map[string]struct{})
-	isSports := func(eventSlug, marketSlug string) bool {
-		if polymarket.LooksLikeSportsSlug(eventSlug, marketSlug) {
-			return true
+
+	need := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, h := range holdings {
+		if polymarket.LooksLikeSportsSlug(h.EventSlug, h.Slug) {
+			continue
 		}
-		slug := eventSlug
+		slug := strings.TrimSpace(h.EventSlug)
 		if slug == "" {
-			return false
+			continue
 		}
-		if _, ok := failed[slug]; ok {
-			return true
+		if _, ok := seen[slug]; ok {
+			continue
 		}
-		if v, ok := sportsCache[slug]; ok {
-			return v
-		}
-		if api == nil {
-			sportsCache[slug] = false
-			return false
-		}
-		v, err := api.EventIsSports(ctx, slug)
-		if err != nil {
-			failed[slug] = struct{}{}
-			return true
-		}
-		sportsCache[slug] = v
-		return v
+		seen[slug] = struct{}{}
+		need = append(need, slug)
 	}
+	if api != nil && len(need) > 0 {
+		var mu sync.Mutex
+		workers := 8
+		if workers > len(need) {
+			workers = len(need)
+		}
+		jobs := make(chan string)
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for slug := range jobs {
+					v, err := api.EventIsSports(ctx, slug)
+					mu.Lock()
+					if err != nil {
+						failed[slug] = struct{}{}
+					} else {
+						sportsCache[slug] = v
+					}
+					mu.Unlock()
+				}
+			}()
+		}
+		for _, slug := range need {
+			jobs <- slug
+		}
+		close(jobs)
+		wg.Wait()
+	}
+
 	var keep []PortHolding
 	for _, h := range holdings {
-		if isSports(h.EventSlug, h.Slug) {
+		if polymarket.LooksLikeSportsSlug(h.EventSlug, h.Slug) {
+			continue
+		}
+		slug := strings.TrimSpace(h.EventSlug)
+		if slug == "" {
+			keep = append(keep, h)
+			continue
+		}
+		if _, ok := failed[slug]; ok {
+			continue
+		}
+		if sportsCache[slug] {
 			continue
 		}
 		keep = append(keep, h)
@@ -284,24 +318,70 @@ func BuildPortReport(ctx context.Context, api sportsLookup, w sharps.Wallet, pos
 	}
 }
 
+func portPositionOpts(user string, offset int) polymarket.FetchPositionsOptions {
+	return polymarket.FetchPositionsOptions{
+		User:          user,
+		Limit:         portPageSize,
+		Offset:        offset,
+		SortBy:        "CURRENT",
+		SortDirection: "DESC",
+	}
+}
+
 func fetchAllPositions(ctx context.Context, api positionLookup, user string) ([]polymarket.Position, bool, error) {
-	var all []polymarket.Position
-	truncated := false
-	for offset := 0; offset < portMaxOffset; offset += portPageSize {
-		page, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{
-			User:   user,
-			Limit:  portPageSize,
-			Offset: offset,
-		})
-		if err != nil {
-			return all, truncated, err
+	first, err := api.FetchPositions(ctx, portPositionOpts(user, 0))
+	if err != nil {
+		return first, false, err
+	}
+	if len(first) < portPageSize {
+		return first, false, nil
+	}
+
+	type slot struct {
+		offset int
+		page   []polymarket.Position
+		err    error
+	}
+	n := (portMaxOffset / portPageSize) - 1
+	ch := make(chan slot, n)
+	var wg sync.WaitGroup
+	for offset := portPageSize; offset < portMaxOffset; offset += portPageSize {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			page, err := api.FetchPositions(ctx, portPositionOpts(user, offset))
+			ch <- slot{offset: offset, page: page, err: err}
+		}(offset)
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	byOff := make(map[int][]polymarket.Position, n)
+	var firstErr error
+	for s := range ch {
+		if s.err != nil {
+			if firstErr == nil {
+				firstErr = s.err
+			}
+			continue
+		}
+		byOff[s.offset] = s.page
+	}
+
+	all := append([]polymarket.Position{}, first...)
+	for offset := portPageSize; offset < portMaxOffset; offset += portPageSize {
+		page, ok := byOff[offset]
+		if !ok {
+			return all, false, firstErr
 		}
 		all = append(all, page...)
 		if len(page) < portPageSize {
-			return all, truncated, nil
+			return all, false, firstErr
 		}
 	}
-	return all, true, nil
+	return all, true, firstErr
 }
 
 // FetchPortReport loads one wallet's open positions and builds /port.

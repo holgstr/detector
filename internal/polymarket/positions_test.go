@@ -51,6 +51,32 @@ func TestFetchPositionsQuery(t *testing.T) {
 	}
 }
 
+func TestFetchPositionsSortBy(t *testing.T) {
+	var got url.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		_ = json.NewEncoder(w).Encode([]Position{})
+	}))
+	t.Cleanup(ts.Close)
+
+	c := NewClient()
+	c.HTTP = ts.Client()
+	c.HTTP.Transport = rewriteHost(ts.URL)
+
+	_, err := c.FetchPositions(context.Background(), FetchPositionsOptions{
+		User:          "0xAAA",
+		Limit:         500,
+		SortBy:        "CURRENT",
+		SortDirection: "DESC",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("sortBy") != "CURRENT" || got.Get("sortDirection") != "DESC" {
+		t.Fatalf("query=%s", got.Encode())
+	}
+}
+
 func TestFetchPositionsOffset(t *testing.T) {
 	var got url.Values
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
