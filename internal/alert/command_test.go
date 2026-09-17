@@ -75,6 +75,19 @@ func TestParseCommand(t *testing.T) {
 		t.Fatalf("pos empty %+v", got)
 	}
 
+	got = ParseCommand("/port Flip")
+	if got.Cmd != CmdPort || got.Trader != "Flip" {
+		t.Fatalf("port %+v", got)
+	}
+	got = ParseCommand("/portfolio@detectx_bot Flipadelphia")
+	if got.Cmd != CmdPort || got.Trader != "Flipadelphia" {
+		t.Fatalf("port mention %+v", got)
+	}
+	got = ParseCommand("/port")
+	if got.Cmd != CmdPort || got.Trader != "" {
+		t.Fatalf("port empty %+v", got)
+	}
+
 	if ParseCommand("/update").Cmd != CmdUpdate {
 		t.Fatal("update")
 	}

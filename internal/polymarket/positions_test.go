@@ -51,6 +51,31 @@ func TestFetchPositionsQuery(t *testing.T) {
 	}
 }
 
+func TestFetchPositionsOffset(t *testing.T) {
+	var got url.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		_ = json.NewEncoder(w).Encode([]Position{})
+	}))
+	t.Cleanup(ts.Close)
+
+	c := NewClient()
+	c.HTTP = ts.Client()
+	c.HTTP.Transport = rewriteHost(ts.URL)
+
+	_, err := c.FetchPositions(context.Background(), FetchPositionsOptions{
+		User:   "0xAAA",
+		Limit:  500,
+		Offset: 500,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("offset") != "500" || got.Get("limit") != "500" {
+		t.Fatalf("query=%s", got.Encode())
+	}
+}
+
 func TestNetShares(t *testing.T) {
 	cases := []struct {
 		name string
