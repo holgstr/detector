@@ -11,7 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
-// /port <trader> lists that wallet's open non-sports nets (shares, live price vs cost).
+// /port <trader> lists that wallet's open non-sports nets of $100+ (shares, live price vs cost).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
 
