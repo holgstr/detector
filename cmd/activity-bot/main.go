@@ -12,6 +12,7 @@
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /port <trader> lists that wallet's open non-sports nets of $100+ (shares, live price vs cost).
+// /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
 
@@ -327,6 +328,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdPort {
 		replyPort(ctx, tg, api, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdLastTrades {
+		replyLastTrades(ctx, tg, api, chatID, cmd)
+	}
 	if cmd.Cmd == alert.CmdUpdate {
 		replyUpdate(ctx, tg, chatID)
 	}
@@ -353,7 +357,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
 }
 
@@ -451,6 +455,33 @@ func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client,
 		}
 	}
 	log.Printf("port trader=%s markets=%d", w.Name, len(rep.Holdings))
+}
+
+func replyLastTrades(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+	wallets, errMsg := alert.ResolveNetWallets(cmd.Trader)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	label := strings.TrimSpace(cmd.Trader)
+	if len(wallets) == 1 {
+		label = wallets[0].Name
+	}
+	rep, err := alert.FetchLastTradesReport(ctx, api, wallets, cmd.Window, cmd.Market, label)
+	chunks := alert.FormatLastTradesReport(rep)
+	if err != nil && len(rep.Trades) == 0 {
+		chunks = []string{fmt.Sprintf("Couldn't load activity: %v", err)}
+	} else if err != nil {
+		chunks = append(chunks, fmt.Sprintf("(partial fetch: %v)", err))
+	}
+	for _, text := range chunks {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+	log.Printf("lasttrades %s trader=%q market=%q fills=%d", rep.Window, cmd.Trader, cmd.Market, len(rep.Trades))
 }
 
 func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
