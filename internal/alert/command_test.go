@@ -97,6 +97,34 @@ func TestParseCommand(t *testing.T) {
 	if ParseCommand("/pull").Cmd != CmdUpdate {
 		t.Fatal("pull alias")
 	}
+
+	got = ParseCommand("/lasttrades")
+	if got.Cmd != CmdLastTrades || got.Window != 24*time.Hour || got.Trader != "" || got.Market != "" {
+		t.Fatalf("lasttrades default %+v", got)
+	}
+	got = ParseCommand("/lasttrades Flip 6h")
+	if got.Cmd != CmdLastTrades || got.Window != 6*time.Hour || got.Trader != "Flip" || got.Market != "" {
+		t.Fatalf("lasttrades trader window %+v", got)
+	}
+	got = ParseCommand("/trades 6h Flip Andersson")
+	if got.Cmd != CmdLastTrades || got.Window != 6*time.Hour || got.Trader != "Flip" || got.Market != "Andersson" {
+		t.Fatalf("lasttrades mixed %+v", got)
+	}
+	got = ParseCommand("/lasttrades@detectx_bot Magdalena Andersson 12h")
+	if got.Cmd != CmdLastTrades || got.Window != 12*time.Hour || got.Trader != "" || got.Market != "Magdalena Andersson" {
+		t.Fatalf("lasttrades market only %+v", got)
+	}
+	got = ParseCommand("/lasttrades all Andersson")
+	if got.Cmd != CmdLastTrades || got.Trader != "" || got.Market != "Andersson" {
+		t.Fatalf("lasttrades all market %+v", got)
+	}
+	got = ParseCommand("/last-trades Flipadelphia")
+	if got.Cmd != CmdLastTrades || got.Trader != "Flipadelphia" || got.Market != "" {
+		t.Fatalf("lasttrades trader only %+v", got)
+	}
+	if ParseCommand("/lasttrades 6h 12h").Cmd != CmdHelp {
+		t.Fatal("two windows → help")
+	}
 }
 
 func TestEffectiveMinUSD(t *testing.T) {
