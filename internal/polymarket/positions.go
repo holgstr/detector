@@ -30,6 +30,7 @@ type FetchPositionsOptions struct {
 	User   string
 	Market string // condition ID; empty = all markets
 	Limit  int    // default 50, max 500
+	Offset int    // skip this many rows (page through a full book)
 }
 
 // FetchPositions returns open positions for a wallet from /positions.
@@ -50,6 +51,9 @@ func (c *Client) FetchPositions(ctx context.Context, opt FetchPositionsOptions) 
 	q.Set("user", user)
 	q.Set("limit", strconv.Itoa(limit))
 	q.Set("sizeThreshold", "0")
+	if opt.Offset > 0 {
+		q.Set("offset", strconv.Itoa(opt.Offset))
+	}
 	if m := strings.TrimSpace(opt.Market); m != "" {
 		q.Set("market", m)
 	}

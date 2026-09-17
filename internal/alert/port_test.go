@@ -1,0 +1,149 @@
+package alert
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/sharps"
+)
+
+func TestResolvePortWallet(t *testing.T) {
+	if _, msg := ResolvePortWallet(""); msg != PortUsage {
+		t.Fatalf("empty: %q", msg)
+	}
+	if _, msg := ResolvePortWallet("all"); msg != PortUsage {
+		t.Fatalf("all: %q", msg)
+	}
+	w, msg := ResolvePortWallet("Flip")
+	if msg != "" || w.Name != "Flipadelphia" {
+		t.Fatalf("Flip: %+v %q", w, msg)
+	}
+	if _, msg := ResolvePortWallet("no-such-trader"); !strings.Contains(msg, "No tracked trader") {
+		t.Fatalf("missing: %q", msg)
+	}
+}
+
+func TestNetPortHoldingsMergeAvgAndValue(t *testing.T) {
+	// 100 Yes @ 0.60 + 40 No @ 0.40 → leftover 60 Yes; merge avg (cash-no)/net = 0.60; cur 0.64 → +4c; value 38.4
+	got := NetPortHoldings([]polymarket.Position{
+		{ConditionID: "a", Title: "Market A", Outcome: "Yes", Size: 100, AvgPrice: 0.60, CurPrice: 0.64},
+		{ConditionID: "a", Outcome: "No", Size: 40, AvgPrice: 0.40, CurPrice: 0.36},
+		{ConditionID: "b", Title: "Market B", Outcome: "No", Size: 17000, AvgPrice: 0.21, CurPrice: 0.20},
+		{ConditionID: "flat", Title: "Flat", Outcome: "Yes", Size: 10, AvgPrice: 0.5, CurPrice: 0.5},
+		{ConditionID: "flat", Outcome: "No", Size: 10, AvgPrice: 0.5, CurPrice: 0.5},
+		{ConditionID: "dust", Title: "Dust", Outcome: "Yes", Size: 0.2, AvgPrice: 0.9, CurPrice: 0.9},
+	})
+	byTitle := map[string]PortHolding{}
+	for _, h := range got {
+		byTitle[h.Title] = h
+	}
+	if _, ok := byTitle["Flat"]; ok {
+		t.Fatalf("flat should drop: %+v", got)
+	}
+	if _, ok := byTitle["Dust"]; ok {
+		t.Fatalf("dust should drop: %+v", got)
+	}
+	a := byTitle["Market A"]
+	if a.Outcome != "YES" || a.Size != 60 || !a.HasAvg || !a.HasCur {
+		t.Fatalf("A=%+v", a)
+	}
+	if abs(a.AvgPrice-0.60) > 1e-9 || a.CurPrice != 0.64 || abs(a.MarketValue-38.4) > 1e-9 {
+		t.Fatalf("A prices %+v", a)
+	}
+	b := byTitle["Market B"]
+	if b.Outcome != "NO" || b.Size != 17000 || b.CurPrice != 0.20 {
+		t.Fatalf("B=%+v", b)
+	}
+}
+
+func TestBuildPortReportSortsByMarketValueDropsSports(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	pos := []polymarket.Position{
+		{ConditionID: "a", Title: "Market A", Outcome: "Yes", Size: 8600, AvgPrice: 0.61, CurPrice: 0.64},
+		{ConditionID: "b", Title: "Market B", EventSlug: "nfl-atl-pit-2026-09-13", Outcome: "Yes", Size: 99999, AvgPrice: 0.5, CurPrice: 0.9},
+		{ConditionID: "c", Title: "Market C", Outcome: "No", Size: 3400, AvgPrice: 0.21, CurPrice: 0.20},
+	}
+	r := BuildPortReport(context.Background(), fakeSports{}, w, pos, false)
+	if r.Name != "Alice" || len(r.Holdings) != 2 {
+		t.Fatalf("%+v", r)
+	}
+	if r.Holdings[0].Title != "Market A" || r.Holdings[1].Title != "Market C" {
+		t.Fatalf("sort %+v", r.Holdings)
+	}
+}
+
+func TestBuildPortReportHidesWhenSportsLookupFails(t *testing.T) {
+	w := sharps.Wallet{Address: "0xaaa", Name: "Alice"}
+	pos := []polymarket.Position{
+		{ConditionID: "a", Title: "Mystery", EventSlug: "mystery-event", Outcome: "Yes", Size: 50, AvgPrice: 0.5, CurPrice: 0.5},
+	}
+	r := BuildPortReport(context.Background(), failSports{}, w, pos, false)
+	if len(r.Holdings) != 0 {
+		t.Fatalf("unknown events must not leak when Gamma is down: %+v", r.Holdings)
+	}
+}
+
+func TestFormatPortReport(t *testing.T) {
+	chunks := FormatPortReport(PortReport{
+		Name: "Alice",
+		Holdings: []PortHolding{
+			{Title: "Market A", Size: 8600, Outcome: "YES", CurPrice: 0.64, AvgPrice: 0.61, HasCur: true, HasAvg: true},
+			{Title: "Market B", Size: 3400, Outcome: "NO", CurPrice: 0.20, AvgPrice: 0.21, HasCur: true, HasAvg: true},
+		},
+	})
+	if len(chunks) != 1 {
+		t.Fatalf("chunks=%d", len(chunks))
+	}
+	got := chunks[0]
+	if !strings.Contains(got, "Portfolio · Alice") {
+		t.Fatalf("head: %s", got)
+	}
+	if !strings.Contains(got, "8.6k YES  Market A | 64c (+3c)") {
+		t.Fatalf("A: %s", got)
+	}
+	if !strings.Contains(got, "3.4k NO  Market B | 20c (-1c)") {
+		t.Fatalf("B: %s", got)
+	}
+
+	empty := FormatPortReport(PortReport{Name: "Alice"})
+	if len(empty) != 1 || !strings.Contains(empty[0], "No open non-sports holdings") {
+		t.Fatalf("%v", empty)
+	}
+}
+
+type fakePortAPI struct {
+	pos    map[string][]polymarket.Position
+	sports map[string]bool
+	err    error
+}
+
+func (f fakePortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.pos[strings.ToLower(opt.User)], nil
+}
+
+func (f fakePortAPI) EventIsSports(_ context.Context, slug string) (bool, error) {
+	return f.sports[slug], nil
+}
+
+func TestFetchPortReport(t *testing.T) {
+	api := fakePortAPI{
+		pos: map[string][]polymarket.Position{
+			"0xaaa": {
+				{ConditionID: "a", Title: "Market A", Outcome: "Yes", Size: 25, AvgPrice: 0.40, CurPrice: 0.50},
+				{ConditionID: "s", Title: "Game", EventSlug: "nba", Slug: "nba-foo", Outcome: "Yes", Size: 100, AvgPrice: 0.5, CurPrice: 0.5},
+			},
+		},
+	}
+	r, err := FetchPortReport(context.Background(), api, sharps.Wallet{Address: "0xAAA", Name: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Holdings) != 1 || r.Holdings[0].Title != "Market A" || r.Holdings[0].Size != 25 {
+		t.Fatalf("%+v", r)
+	}
+}

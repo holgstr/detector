@@ -19,6 +19,7 @@ const (
 	CmdMinSizeSet
 	CmdNet
 	CmdPos
+	CmdPort
 	CmdUpdate
 )
 
@@ -31,7 +32,7 @@ type ParsedCommand struct {
 	Market string
 }
 
-// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], and /update.
+// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /port [trader], and /update.
 func ParseCommand(text string) ParsedCommand {
 	line := strings.TrimSpace(text)
 	if line == "" {
@@ -73,6 +74,8 @@ func ParseCommand(text string) ParsedCommand {
 		return ParsedCommand{Cmd: CmdNet, Window: w, Trader: trader}
 	case "pos", "position", "positions", "holdings":
 		return ParsedCommand{Cmd: CmdPos, Market: strings.TrimSpace(rest)}
+	case "port", "portfolio":
+		return ParsedCommand{Cmd: CmdPort, Trader: strings.TrimSpace(rest)}
 	case "update", "upgrade", "pull", "deploy":
 		return ParsedCommand{Cmd: CmdUpdate}
 	default:
@@ -198,7 +201,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets, shares sorted by market value\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.

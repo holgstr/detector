@@ -11,6 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
+// /port <trader> lists that wallet's open non-sports nets (shares, live price vs cost).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
 
@@ -323,6 +324,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdPos {
 		replyPos(ctx, tg, api, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdPort {
+		replyPort(ctx, tg, api, chatID, cmd)
+	}
 	if cmd.Cmd == alert.CmdUpdate {
 		replyUpdate(ctx, tg, chatID)
 	}
@@ -349,7 +353,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
 }
 
@@ -420,6 +424,33 @@ func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 		}
 	}
 	log.Printf("net %s trader=%q markets=%d", rep.Window, cmd.Trader, countMarkets(rep))
+}
+
+func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+	w, errMsg := alert.ResolvePortWallet(cmd.Trader)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchPortReport(ctx, api, w)
+	if err != nil && len(rep.Holdings) == 0 {
+		if sendErr := tg.SendMessage(ctx, chatID, fmt.Sprintf("Couldn't load positions: %v", err)); sendErr != nil {
+			log.Printf("reply: %v", sendErr)
+		}
+		return
+	}
+	chunks := alert.FormatPortReport(rep)
+	if err != nil {
+		chunks = append(chunks, fmt.Sprintf("(partial fetch: %v)", err))
+	}
+	for _, text := range chunks {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+	log.Printf("port trader=%s markets=%d", w.Name, len(rep.Holdings))
 }
 
 func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
