@@ -18,9 +18,9 @@ func TestBuildPosReportSortsByOverallYes(t *testing.T) {
 		{Address: "0xddd", Name: "Dee"},
 	}
 	by := map[string][]polymarket.Position{
-		"0xaaa": {{Outcome: "Yes", Size: 10}, {Outcome: "No", Size: 2}},
-		"0xbbb": {{Outcome: "No", Size: 50}},
-		"0xccc": {{Outcome: "Yes", Size: 100}},
+		"0xaaa": {{Outcome: "Yes", Size: 10, AvgPrice: 0.60, CurPrice: 0.64}, {Outcome: "No", Size: 2, AvgPrice: 0.40, CurPrice: 0.36}},
+		"0xbbb": {{Outcome: "No", Size: 50, AvgPrice: 0.21, CurPrice: 0.20}},
+		"0xccc": {{Outcome: "Yes", Size: 100, AvgPrice: 0.61, CurPrice: 0.64}},
 		"0xddd": {{Outcome: "Yes", Size: 0.1}}, // dust
 	}
 	r := BuildPosReport("Andersson", m, wallets, by, 0)
@@ -38,6 +38,21 @@ func TestBuildPosReportSortsByOverallYes(t *testing.T) {
 	}
 	if r.Holdings[2].Name != "Bob" || r.Holdings[2].Outcome != "NO" {
 		t.Fatalf("want Bob last: %+v", r.Holdings)
+	}
+	cara := r.Holdings[0]
+	if !cara.HasAvg || !cara.HasCur || cara.AvgPrice != 0.61 || cara.CurPrice != 0.64 {
+		t.Fatalf("Cara prices %+v", cara)
+	}
+	alice := r.Holdings[1]
+	if !alice.HasAvg || !alice.HasCur || alice.CurPrice != 0.64 {
+		t.Fatalf("Alice prices %+v", alice)
+	}
+	if abs(alice.AvgPrice-0.60) > 1e-9 {
+		t.Fatalf("Alice avg %v want 0.60", alice.AvgPrice)
+	}
+	bob := r.Holdings[2]
+	if !bob.HasAvg || !bob.HasCur || bob.AvgPrice != 0.21 || bob.CurPrice != 0.20 {
+		t.Fatalf("Bob prices %+v", bob)
 	}
 }
 
@@ -74,8 +89,8 @@ func TestFormatPosReport(t *testing.T) {
 		OverallSize: 90,
 		OverallSide: "YES",
 		Holdings: []PosHolding{
-			{Name: "Cara", Size: 100, Outcome: "YES"},
-			{Name: "Bob", Size: 10, Outcome: "NO"},
+			{Name: "Cara", Size: 100, Outcome: "YES", AvgPrice: 0.61, CurPrice: 0.64, HasAvg: true, HasCur: true},
+			{Name: "Bob", Size: 10, Outcome: "NO", AvgPrice: 0.21, CurPrice: 0.20, HasAvg: true, HasCur: true},
 		},
 	})
 	if len(chunks) != 1 {
@@ -91,7 +106,7 @@ func TestFormatPosReport(t *testing.T) {
 	if !strings.Contains(got, "Tracked net 90 YES") {
 		t.Fatalf("net: %s", got)
 	}
-	if !strings.Contains(got, "100 YES  Cara") || !strings.Contains(got, "10 NO  Bob") {
+	if !strings.Contains(got, "100 YES  Cara | 61c → 64c") || !strings.Contains(got, "10 NO  Bob | 21c → 20c") {
 		t.Fatalf("lines: %s", got)
 	}
 
@@ -175,7 +190,7 @@ func TestFetchPosReport(t *testing.T) {
 	api := fakePosAPI{
 		market: polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xabc", Question: "Will Magdalena Andersson win?"}, Active: true},
 		pos: fakePositions{
-			"0xaaa|0xabc": {{Outcome: "Yes", Size: 25}},
+			"0xaaa|0xabc": {{Outcome: "Yes", Size: 25, AvgPrice: 0.40, CurPrice: 0.50}},
 		},
 	}
 	r, err := FetchPosReport(context.Background(), api, "Andersson", []sharps.Wallet{{Address: "0xAAA", Name: "Alice"}})
@@ -184,5 +199,9 @@ func TestFetchPosReport(t *testing.T) {
 	}
 	if len(r.Holdings) != 1 || r.Holdings[0].Size != 25 || r.Title != "Will Magdalena Andersson win?" {
 		t.Fatalf("%+v", r)
+	}
+	h := r.Holdings[0]
+	if !h.HasAvg || !h.HasCur || h.AvgPrice != 0.40 || h.CurPrice != 0.50 {
+		t.Fatalf("prices %+v", h)
 	}
 }

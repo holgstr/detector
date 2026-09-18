@@ -25,10 +25,14 @@ type posMarketAPI interface {
 
 // PosHolding is one tracked wallet's net shares in a market.
 type PosHolding struct {
-	Name    string
-	Wallet  string
-	Size    float64
-	Outcome string
+	Name     string
+	Wallet   string
+	Size     float64
+	Outcome  string
+	CurPrice float64
+	AvgPrice float64
+	HasCur   bool
+	HasAvg   bool
 }
 
 // PosReport is /pos output: current nets for tracked traders in one market.
@@ -72,17 +76,21 @@ func BuildPosReport(query string, market polymarket.SearchMarket, wallets []shar
 	var overall float64
 	for _, w := range wallets {
 		addr := strings.ToLower(w.Address)
-		np := polymarket.NetShares(byWallet[addr])
-		if !np.Known || math.Abs(np.Size) < posShareEps || strings.TrimSpace(np.Outcome) == "" {
+		net, ok := primaryNetHolding(byWallet[addr])
+		if !ok {
 			continue
 		}
 		holdings = append(holdings, PosHolding{
-			Name:    w.Name,
-			Wallet:  addr,
-			Size:    np.Size,
-			Outcome: np.Outcome,
+			Name:     w.Name,
+			Wallet:   addr,
+			Size:     net.Size,
+			Outcome:  net.Outcome,
+			CurPrice: net.CurPrice,
+			AvgPrice: net.AvgPrice,
+			HasCur:   net.HasCur,
+			HasAvg:   net.HasAvg,
 		})
-		overall += signedHolding(np.Size, np.Outcome)
+		overall += signedHolding(net.Size, net.Outcome)
 	}
 
 	yesFirst := overall >= 0
@@ -301,7 +309,7 @@ func FormatPosReport(r PosReport) []string {
 
 	var blocks []string
 	for _, h := range r.Holdings {
-		blocks = append(blocks, fmt.Sprintf("%s %s  %s", formatShares(h.Size), h.Outcome, h.Name))
+		blocks = append(blocks, fmt.Sprintf("%s %s  %s%s", formatShares(h.Size), h.Outcome, h.Name, formatAcqCur(h.HasAvg, h.HasCur, h.AvgPrice, h.CurPrice)))
 	}
 	if r.FailedWallets > 0 {
 		blocks = append(blocks, fmt.Sprintf("(%d wallet lookups failed.)", r.FailedWallets))
