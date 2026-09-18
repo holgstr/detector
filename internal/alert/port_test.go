@@ -82,7 +82,7 @@ func TestBuildPortReportDropsSub100Value(t *testing.T) {
 	pos := []polymarket.Position{
 		{ConditionID: "keep", Title: "Keep", Outcome: "Yes", Size: 200, AvgPrice: 0.50, CurPrice: 0.50},   // $100
 		{ConditionID: "drop", Title: "Drop", Outcome: "Yes", Size: 199.8, AvgPrice: 0.50, CurPrice: 0.50}, // $99.90
-		{ConditionID: "nopx", Title: "NoPx", Outcome: "Yes", Size: 5000, AvgPrice: 0.40},                   // no live px
+		{ConditionID: "nopx", Title: "NoPx", Outcome: "Yes", Size: 5000, AvgPrice: 0.40},                  // no live px
 	}
 	r := BuildPortReport(context.Background(), fakeSports{}, w, pos, false)
 	if len(r.Holdings) != 1 || r.Holdings[0].Title != "Keep" {
@@ -207,7 +207,7 @@ func (p *pagingPortAPI) EventIsSports(context.Context, string) (bool, error) {
 func TestFetchPortReportOnePage(t *testing.T) {
 	api := &pagingPortAPI{
 		rows: []polymarket.Position{
-			{ConditionID: "a", Title: "A", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+			{ConditionID: "a", Title: "A", Outcome: "Yes", Size: 400, CurPrice: 0.5},
 		},
 	}
 	r, err := FetchPortReport(context.Background(), api, sharps.Wallet{Address: "0xaaa", Name: "Alice"})
@@ -232,7 +232,7 @@ func TestFetchPortReportPagesInParallel(t *testing.T) {
 			ConditionID: fmt.Sprintf("c%d", i),
 			Title:       fmt.Sprintf("M%d", i),
 			Outcome:     "Yes",
-			Size:        10,
+			Size:        400,
 			CurPrice:    0.5,
 		}
 	}
@@ -276,7 +276,7 @@ func (f *fullBookPortAPI) FetchPositions(_ context.Context, opt polymarket.Fetch
 			ConditionID: fmt.Sprintf("%d-%d", opt.Offset, i),
 			Title:       "M",
 			Outcome:     "Yes",
-			Size:        3,
+			Size:        400,
 			CurPrice:    0.4,
 		}
 	}
@@ -310,10 +310,10 @@ type countingSportsAPI struct {
 
 func (c *countingSportsAPI) FetchPositions(context.Context, polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
 	return []polymarket.Position{
-		{ConditionID: "a", Title: "A", EventSlug: "event-a", Outcome: "Yes", Size: 10, CurPrice: 0.5},
-		{ConditionID: "b", Title: "B", EventSlug: "event-b", Outcome: "Yes", Size: 10, CurPrice: 0.5},
-		{ConditionID: "c", Title: "C", EventSlug: "event-a", Outcome: "Yes", Size: 10, CurPrice: 0.5},
-		{ConditionID: "d", Title: "D", EventSlug: "nfl-atl-pit-2026-09-13", Outcome: "Yes", Size: 10, CurPrice: 0.5},
+		{ConditionID: "a", Title: "A", EventSlug: "event-a", Outcome: "Yes", Size: 400, CurPrice: 0.5},
+		{ConditionID: "b", Title: "B", EventSlug: "event-b", Outcome: "Yes", Size: 400, CurPrice: 0.5},
+		{ConditionID: "c", Title: "C", EventSlug: "event-a", Outcome: "Yes", Size: 400, CurPrice: 0.5},
+		{ConditionID: "d", Title: "D", EventSlug: "nfl-atl-pit-2026-09-13", Outcome: "Yes", Size: 400, CurPrice: 0.5},
 	}, nil
 }
 

@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,6 +125,29 @@ func TestParseCommand(t *testing.T) {
 	}
 	if ParseCommand("/lasttrades 6h 12h").Cmd != CmdHelp {
 		t.Fatal("two windows → help")
+	}
+
+	if ParseCommand("/tracked").Cmd != CmdTracked {
+		t.Fatal("tracked")
+	}
+	if ParseCommand("/wallets@detectx_bot").Cmd != CmdTracked {
+		t.Fatal("tracked mention")
+	}
+	got = ParseCommand("/add Flipadelphia")
+	if got.Cmd != CmdAdd || got.Query != "Flipadelphia" {
+		t.Fatalf("add %+v", got)
+	}
+	got = ParseCommand("/track@detectx_bot 0x448861155279dbf833d041b963e3ac854599e319")
+	if got.Cmd != CmdAdd || !strings.HasPrefix(got.Query, "0x4488") {
+		t.Fatalf("add addr %+v", got)
+	}
+	got = ParseCommand("/unadd Flip")
+	if got.Cmd != CmdUnadd || got.Query != "Flip" {
+		t.Fatalf("unadd %+v", got)
+	}
+	got = ParseCommand("/remove SnowLover7")
+	if got.Cmd != CmdUnadd || got.Query != "SnowLover7" {
+		t.Fatalf("remove %+v", got)
 	}
 }
 

@@ -2,15 +2,17 @@ package sharps
 
 import (
 	"strings"
+	"sync"
 )
 
 // Wallet is a tracked sharp from the detector activity/portfolio tabs.
 type Wallet struct {
-	Address string
-	Name    string
+	Address string `json:"address"`
+	Name    string `json:"name"`
 }
 
-// Tracked is the same list as docs/sharps.js TRACKED. Keep the two in sync.
+// Tracked is the compiled-in seed list (same as docs/sharps.js TRACKED).
+// Runtime /add and /unadd change the live list used by List, Lookup, and Addresses.
 var Tracked = []Wallet{
 	{Address: "0x23d81ba9371e576015c1e562db09c689f56b0288", Name: "flawfence"},
 	{Address: "0x614dc8d3542c12103d2c6a3553fd761e391d1546", Name: "mr.ozi"},
@@ -30,19 +32,61 @@ var Tracked = []Wallet{
 	{Address: "0x6640bd87f6e4b6e8d62457448bd1b3a4711a2202", Name: "Jellow2"},
 }
 
-// Addresses returns lowercase proxy wallets.
+var (
+	liveMu sync.RWMutex
+	live   []Wallet
+)
+
+func init() {
+	Reset()
+}
+
+// Reset restores the live list to the compiled-in seed.
+func Reset() {
+	SetList(Tracked)
+}
+
+// SetList replaces the live tracked set. Wallets are keyed by address.
+func SetList(wallets []Wallet) {
+	next := make([]Wallet, 0, len(wallets))
+	seen := make(map[string]struct{}, len(wallets))
+	for _, w := range wallets {
+		addr := strings.ToLower(strings.TrimSpace(w.Address))
+		if addr == "" {
+			continue
+		}
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+		next = append(next, Wallet{Address: addr, Name: strings.TrimSpace(w.Name)})
+	}
+	liveMu.Lock()
+	live = next
+	liveMu.Unlock()
+}
+
+// List returns a copy of the live tracked wallets.
+func List() []Wallet {
+	liveMu.RLock()
+	defer liveMu.RUnlock()
+	return append([]Wallet(nil), live...)
+}
+
+// Addresses returns lowercase proxy wallets from the live list.
 func Addresses() []string {
-	out := make([]string, len(Tracked))
-	for i, w := range Tracked {
+	ws := List()
+	out := make([]string, len(ws))
+	for i, w := range ws {
 		out[i] = strings.ToLower(w.Address)
 	}
 	return out
 }
 
-// NameOf returns the seeded display name, or empty if unknown.
+// NameOf returns the live display name, or empty if unknown.
 func NameOf(wallet string) string {
 	want := strings.ToLower(strings.TrimSpace(wallet))
-	for _, w := range Tracked {
+	for _, w := range List() {
 		if strings.ToLower(w.Address) == want {
 			return w.Name
 		}
@@ -50,17 +94,21 @@ func NameOf(wallet string) string {
 	return ""
 }
 
-// Lookup finds tracked wallets by a short name fragment or address prefix.
+// Lookup finds live tracked wallets by a short name fragment or address prefix.
 // Rank: exact name/address, then name/address prefix (Flip → Flipadelphia),
 // then name substring. The best non-empty rank is returned as-is (1 or many).
 func Lookup(query string) []Wallet {
+	return lookup(List(), query)
+}
+
+func lookup(wallets []Wallet, query string) []Wallet {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
-		return append([]Wallet(nil), Tracked...)
+		return append([]Wallet(nil), wallets...)
 	}
 	q = strings.Trim(q, "\"'`“”„")
 	var exact, prefix, contain []Wallet
-	for _, w := range Tracked {
+	for _, w := range wallets {
 		name := strings.ToLower(w.Name)
 		addr := strings.ToLower(w.Address)
 		switch {

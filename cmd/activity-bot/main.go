@@ -13,6 +13,7 @@
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /port <trader> lists that wallet's open non-sports nets of $100+ (shares, live price vs cost).
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
+// /tracked lists watched names; /add and /unadd take a wallet id or name (name → current id).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
 
@@ -65,6 +66,7 @@ func main() {
 		state.Seeded = true
 		state.Seen = map[string]int64{}
 	}
+	alert.ApplyTracked(state)
 
 	b := &bot{
 		state:       state,
@@ -331,6 +333,15 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdLastTrades {
 		replyLastTrades(ctx, tg, api, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdTracked {
+		replyTracked(ctx, tg, chatID)
+	}
+	if cmd.Cmd == alert.CmdAdd {
+		replyAdd(ctx, tg, api, b, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdUnadd {
+		replyUnadd(ctx, tg, api, b, chatID, cmd)
+	}
 	if cmd.Cmd == alert.CmdUpdate {
 		replyUpdate(ctx, tg, chatID)
 	}
@@ -357,8 +368,8 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/update to pull GitHub main and restart.\n/help for commands.",
-		len(sharps.Tracked), alert.MinSizeStatus(minUSD))
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
+		len(sharps.List()), alert.MinSizeStatus(minUSD))
 }
 
 func replyUpdate(ctx context.Context, tg *telegram.Client, chatID int64) {
@@ -401,6 +412,123 @@ func replyUpdate(ctx context.Context, tg *telegram.Client, chatID int64) {
 		}
 		log.Printf("exec: %v", err)
 	}
+}
+
+func replyTracked(ctx context.Context, tg *telegram.Client, chatID int64) {
+	msg := alert.FormatTrackedList(sharps.List())
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
+}
+
+func replyAdd(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	w, errMsg := alert.ResolveAddWallet(ctx, api, cmd.Query)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+
+	b.mu.Lock()
+	already := false
+	for _, x := range b.state.ActiveWallets() {
+		if x.Address == w.Address {
+			already = true
+			break
+		}
+	}
+	b.mu.Unlock()
+	if already {
+		msg := fmt.Sprintf("Already tracking %s.", displayTrader(w))
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+
+	acts, fetchErr := api.FetchActivity(ctx, polymarket.FetchActivityOptions{
+		User:  w.Address,
+		Limit: 100,
+		Type:  "TRADE",
+	})
+
+	b.mu.Lock()
+	if fetchErr == nil {
+		b.state.MarkActivitySeen(acts)
+	}
+	already = b.state.AddWallet(w)
+	alert.ApplyTracked(b.state)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	n := len(sharps.List())
+	b.mu.Unlock()
+
+	if already {
+		msg := fmt.Sprintf("Already tracking %s.", displayTrader(w))
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+
+	msg := fmt.Sprintf("Now tracking %s (%d wallets).", displayTrader(w), n)
+	if fetchErr != nil {
+		msg += " Couldn't seed recent fills — the next poll may replay some."
+	}
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("add %s %s wallets=%d", w.Name, w.Address, n)
+}
+
+func replyUnadd(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	w, errMsg := alert.ResolveUnaddWallet(ctx, api, cmd.Query)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+
+	b.mu.Lock()
+	got, ok := b.state.UnaddWallet(w.Address)
+	alert.ApplyTracked(b.state)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	n := len(sharps.List())
+	b.mu.Unlock()
+
+	if !ok {
+		msg := fmt.Sprintf("Not tracking %s.", displayTrader(w))
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	label := displayTrader(got)
+	if strings.TrimSpace(got.Name) == "" {
+		label = displayTrader(w)
+	}
+	msg := fmt.Sprintf("Stopped tracking %s (%d wallets).", label, n)
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("unadd %s %s wallets=%d", got.Name, got.Address, n)
+}
+
+func displayTrader(w sharps.Wallet) string {
+	n := strings.TrimSpace(w.Name)
+	if n != "" {
+		return n
+	}
+	addr := strings.ToLower(strings.TrimSpace(w.Address))
+	if len(addr) >= 12 {
+		return addr[:6] + "…" + addr[len(addr)-4:]
+	}
+	return addr
 }
 
 func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
@@ -492,7 +620,7 @@ func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 		}
 		return
 	}
-	rep, err := alert.FetchPosReport(ctx, api, query, sharps.Tracked)
+	rep, err := alert.FetchPosReport(ctx, api, query, sharps.List())
 	if err != nil && len(rep.Holdings) == 0 && rep.Title == "" {
 		msg := fmt.Sprintf("No active market matching %q.", query)
 		low := strings.ToLower(err.Error())
