@@ -33,6 +33,10 @@ type State struct {
 	// Nil means use the process default (flag / env).
 	MinUSD *float64         `json:"min_usd,omitempty"`
 	Seen   map[string]int64 `json:"seen"`
+	// ExtraWallets are /add wallets (keyed by address). Names are display-only.
+	ExtraWallets []sharps.Wallet `json:"extra_wallets,omitempty"`
+	// Untracked are seed addresses removed with /unadd.
+	Untracked []string `json:"untracked,omitempty"`
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.
@@ -274,6 +278,15 @@ func (s *State) CommitDropped(p Plan) {
 // CommitSent marks fills that were successfully delivered.
 func (s *State) CommitSent(a Alert) {
 	s.mark(a.Keys, 0)
+}
+
+// MarkActivitySeen records fills so a newly /add-ed wallet does not dump history.
+func (s *State) MarkActivitySeen(acts []polymarket.Activity) {
+	keys := make([]string, 0, len(acts))
+	for _, a := range acts {
+		keys = append(keys, polymarket.ActivityKey(a))
+	}
+	s.mark(keys, 0)
 }
 
 func aggregate(acts []polymarket.Activity) []Alert {

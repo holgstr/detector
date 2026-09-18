@@ -41,4 +41,14 @@ func TestLookup(t *testing.T) {
 	if len(Lookup("zzzz-nope")) != 0 {
 		t.Fatal("miss")
 	}
+
+	t.Cleanup(Reset)
+	SetList([]Wallet{{Address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "Extra"}})
+	got = Lookup("Extra")
+	if len(got) != 1 || got[0].Name != "Extra" {
+		t.Fatalf("live extra %+v", got)
+	}
+	if len(Lookup("Flipadelphia")) != 0 {
+		t.Fatal("seed should not be live after SetList")
+	}
 }

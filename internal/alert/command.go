@@ -24,6 +24,9 @@ const (
 	CmdPort
 	CmdLastTrades
 	CmdUpdate
+	CmdTracked
+	CmdAdd
+	CmdUnadd
 )
 
 // ParsedCommand is a recognized chat line.
@@ -33,9 +36,10 @@ type ParsedCommand struct {
 	Window time.Duration
 	Trader string
 	Market string
+	Query  string
 }
 
-// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /port [trader], /lasttrades [trader] [market] [Nh], and /update.
+// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /port [trader], /lasttrades [trader] [market] [Nh], /tracked, /add, /unadd, and /update.
 func ParseCommand(text string) ParsedCommand {
 	line := strings.TrimSpace(text)
 	if line == "" {
@@ -87,6 +91,12 @@ func ParseCommand(text string) ParsedCommand {
 		return ParsedCommand{Cmd: CmdLastTrades, Window: w, Trader: trader, Market: market}
 	case "update", "upgrade", "pull", "deploy":
 		return ParsedCommand{Cmd: CmdUpdate}
+	case "tracked", "tracking", "wallets":
+		return ParsedCommand{Cmd: CmdTracked}
+	case "add", "track":
+		return ParsedCommand{Cmd: CmdAdd, Query: strings.TrimSpace(rest)}
+	case "unadd", "untrack", "remove":
+		return ParsedCommand{Cmd: CmdUnadd, Query: strings.TrimSpace(rest)}
 	default:
 		return ParsedCommand{}
 	}
@@ -245,7 +255,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; omit the trader to use all tracked wallets\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; omit the trader to use all tracked wallets\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.
