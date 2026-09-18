@@ -58,9 +58,9 @@ func FormatOBReport(r OBReport) string {
 		title = strings.TrimSpace(r.Query)
 	}
 	var b strings.Builder
-	b.WriteString("Order book · ")
 	b.WriteString(title)
 	books := booksToShow(r.Books)
+	b.WriteByte('\n')
 	if len(books) == 0 {
 		b.WriteString("\nNo CLOB depth.")
 		return b.String()
@@ -114,12 +114,7 @@ func formatBookLadder(book polymarket.OutcomeBook) string {
 	}
 
 	var b strings.Builder
-	writeSide := func(label string, levels []polymarket.BookLevel) {
-		if len(levels) == 0 {
-			return
-		}
-		b.WriteByte('\n')
-		b.WriteString(label)
+	writeLevels := func(levels []polymarket.BookLevel) {
 		for _, lv := range levels {
 			b.WriteByte('\n')
 			b.WriteString(padRunes(formatTickPrice(lv.Price, book.Tick), priceW))
@@ -127,8 +122,11 @@ func formatBookLadder(book polymarket.OutcomeBook) string {
 			b.WriteString(padRunes(formatShares(lv.Size), sizeW))
 		}
 	}
-	writeSide("Asks", asks)
-	writeSide("Bids", bids)
+	writeLevels(asks)
+	if len(asks) > 0 && len(bids) > 0 {
+		b.WriteString("\n- - -")
+	}
+	writeLevels(bids)
 	if len(asks) == 0 && len(bids) == 0 {
 		b.WriteString("\nNo CLOB depth.")
 	}
