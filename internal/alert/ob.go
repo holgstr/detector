@@ -90,18 +90,19 @@ func isYesOutcome(outcome string) bool {
 }
 
 func formatBookLadder(book polymarket.OutcomeBook) string {
-	asks := append([]polymarket.BookLevel(nil), book.Asks...)
+	asks := levelsWithSize(book.Asks)
 	for i, j := 0, len(asks)-1; i < j; i, j = i+1, j-1 {
 		asks[i], asks[j] = asks[j], asks[i]
 	}
-	rows := make([][2]string, 0, len(asks)+len(book.Bids))
+	bids := levelsWithSize(book.Bids)
+	rows := make([][2]string, 0, len(asks)+len(bids))
 	appendLevels := func(levels []polymarket.BookLevel) {
 		for _, lv := range levels {
-			rows = append(rows, [2]string{formatTickPrice(lv.Price, book.Tick), formatTickSize(lv.Size)})
+			rows = append(rows, [2]string{formatTickPrice(lv.Price, book.Tick), formatShares(lv.Size)})
 		}
 	}
 	appendLevels(asks)
-	appendLevels(book.Bids)
+	appendLevels(bids)
 	priceW, sizeW := 0, 0
 	for _, row := range rows {
 		if n := len([]rune(row[0])); n > priceW {
@@ -123,22 +124,25 @@ func formatBookLadder(book polymarket.OutcomeBook) string {
 			b.WriteByte('\n')
 			b.WriteString(padRunes(formatTickPrice(lv.Price, book.Tick), priceW))
 			b.WriteString("  ")
-			b.WriteString(padRunes(formatTickSize(lv.Size), sizeW))
+			b.WriteString(padRunes(formatShares(lv.Size), sizeW))
 		}
 	}
 	writeSide("Asks", asks)
-	writeSide("Bids", book.Bids)
-	if len(asks) == 0 && len(book.Bids) == 0 {
+	writeSide("Bids", bids)
+	if len(asks) == 0 && len(bids) == 0 {
 		b.WriteString("\nNo CLOB depth.")
 	}
 	return b.String()
 }
 
-func formatTickSize(n float64) string {
-	if n <= 0 {
-		return "—"
+func levelsWithSize(levels []polymarket.BookLevel) []polymarket.BookLevel {
+	out := make([]polymarket.BookLevel, 0, len(levels))
+	for _, lv := range levels {
+		if lv.Size > 0 {
+			out = append(out, lv)
+		}
 	}
-	return formatShares(n)
+	return out
 }
 
 func padRunes(s string, width int) string {

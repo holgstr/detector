@@ -44,20 +44,18 @@ func TestFormatOBReport(t *testing.T) {
 		"Order book · Aliens?",
 		"Asks",
 		"46¢  5.0",
-		"45¢    —",
 		"44¢   20",
 		"43¢   10",
 		"Bids",
 		"42¢   50",
-		"41¢    —",
 		"40¢  100",
 		"39¢   10",
 	}, "\n")
 	if text != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", text, want)
 	}
-	if strings.Contains(text, "YES") || strings.Contains(text, "NO") || strings.Contains(text, "57¢") {
-		t.Fatalf("yes/no label or no-side ticks leaked: %q", text)
+	if strings.Contains(text, "YES") || strings.Contains(text, "NO") || strings.Contains(text, "57¢") || strings.Contains(text, "—") || strings.Contains(text, "45¢") || strings.Contains(text, "41¢") {
+		t.Fatalf("yes/no label, no-side, or empty ticks leaked: %q", text)
 	}
 }
 

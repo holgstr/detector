@@ -86,7 +86,7 @@ func (c *Client) fetchOrderBook(ctx context.Context, tokenID string) (clobBookRe
 	return book, nil
 }
 
-// FetchOutcomeBooks loads the 4 closest ticks on each side for every outcome.
+// FetchOutcomeBooks loads up to 4 closest ticks with size on each side for every outcome.
 func (c *Client) FetchOutcomeBooks(ctx context.Context, conditionID string) ([]OutcomeBook, error) {
 	conditionID = strings.TrimSpace(conditionID)
 	if conditionID == "" {
@@ -159,8 +159,9 @@ func levelsFromClob(in []clobLevel) []BookLevel {
 	return out
 }
 
-// ClosestTicks returns n consecutive ticks from the inside of the book.
-// bids=true walks down from the best bid; otherwise walks up from the best ask.
+// ClosestTicks returns up to n ticks with size from the inside of the book.
+// Empty price levels are skipped. bids=true walks down from the best bid;
+// otherwise walks up from the best ask, staying within n ticks of the inside.
 func ClosestTicks(levels []BookLevel, tick float64, n int, bids bool) []BookLevel {
 	if n <= 0 {
 		return nil
@@ -210,7 +211,9 @@ func ClosestTicks(levels []BookLevel, tick float64, n int, bids bool) []BookLeve
 		if p >= 1 {
 			break
 		}
-		out = append(out, BookLevel{Price: p, Size: sizes[k]})
+		if sz := sizes[k]; sz > 0 {
+			out = append(out, BookLevel{Price: p, Size: sz})
+		}
 	}
 	return out
 }
