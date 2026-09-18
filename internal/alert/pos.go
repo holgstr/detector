@@ -43,6 +43,8 @@ type PosReport struct {
 	URL           string
 	OverallSize   float64
 	OverallSide   string
+	CurPrice      float64
+	HasCur        bool
 	Holdings      []PosHolding
 	FailedWallets int
 }
@@ -54,8 +56,8 @@ func signedHolding(size float64, outcome string) float64 {
 	return size
 }
 
-// BuildPosReport nets each wallet's Yes/No legs, drops flats, and sorts by
-// the overall tracked side (net YES → largest YES first; otherwise largest NO).
+// BuildPosReport nets each wallet's Yes/No legs, drops flats, and sorts YES
+// first (largest size first), then NO.
 func BuildPosReport(query string, market polymarket.SearchMarket, wallets []sharps.Wallet, byWallet map[string][]polymarket.Position, failed int) PosReport {
 	title := strings.TrimSpace(market.Market.Question)
 	if title == "" {
@@ -93,15 +95,14 @@ func BuildPosReport(query string, market polymarket.SearchMarket, wallets []shar
 		overall += signedHolding(net.Size, net.Outcome)
 	}
 
-	yesFirst := overall >= 0
 	sort.SliceStable(holdings, func(i, j int) bool {
-		si := signedHolding(holdings[i].Size, holdings[i].Outcome)
-		sj := signedHolding(holdings[j].Size, holdings[j].Outcome)
-		if si != sj {
-			if yesFirst {
-				return si > sj
-			}
-			return si < sj
+		ri := posOutcomeRank(holdings[i].Outcome)
+		rj := posOutcomeRank(holdings[j].Outcome)
+		if ri != rj {
+			return ri < rj
+		}
+		if holdings[i].Size != holdings[j].Size {
+			return holdings[i].Size > holdings[j].Size
 		}
 		return holdings[i].Name < holdings[j].Name
 	})
@@ -113,7 +114,34 @@ func BuildPosReport(query string, market polymarket.SearchMarket, wallets []shar
 		rep.OverallSize = -overall
 		rep.OverallSide = "NO"
 	}
+	if px, ok := marketPriceForSide(holdings, rep.OverallSide); ok {
+		rep.CurPrice = px
+		rep.HasCur = true
+	}
 	return rep
+}
+
+func marketPriceForSide(holdings []PosHolding, side string) (float64, bool) {
+	if side == "" {
+		return 0, false
+	}
+	for _, h := range holdings {
+		if h.HasCur && strings.EqualFold(h.Outcome, side) {
+			return h.CurPrice, true
+		}
+	}
+	return 0, false
+}
+
+func posOutcomeRank(outcome string) int {
+	switch strings.ToUpper(strings.TrimSpace(outcome)) {
+	case "YES":
+		return 0
+	case "NO":
+		return 1
+	default:
+		return 2
+	}
 }
 
 // resolvePosMarket picks a market for /pos. Explicit slugs, URLs, and condition
@@ -295,9 +323,6 @@ func FormatPosReport(r PosReport) []string {
 		title = strings.TrimSpace(r.Query)
 	}
 	head := title
-	if r.OverallSide != "" {
-		head += fmt.Sprintf("\nTracked net %s %s", formatShares(r.OverallSize), r.OverallSide)
-	}
 
 	if len(r.Holdings) == 0 {
 		body := head + "\nNo tracked holdings in this market."
@@ -308,11 +333,47 @@ func FormatPosReport(r PosReport) []string {
 	}
 
 	var blocks []string
-	for _, h := range r.Holdings {
-		blocks = append(blocks, fmt.Sprintf("%s %s  %s%s", formatShares(h.Size), h.Outcome, h.Name, formatAcqCur(h.HasAvg, h.HasCur, h.AvgPrice, h.CurPrice)))
+	for _, side := range posSides(r.Holdings) {
+		if b := formatPosSide(side, r.Holdings); b != "" {
+			blocks = append(blocks, b)
+		}
 	}
 	if r.FailedWallets > 0 {
 		blocks = append(blocks, fmt.Sprintf("(%d wallet lookups failed.)", r.FailedWallets))
 	}
 	return chunkTelegram(head, blocks)
+}
+
+func posSides(holdings []PosHolding) []string {
+	sides := []string{"YES", "NO"}
+	seen := map[string]bool{"YES": true, "NO": true}
+	for _, h := range holdings {
+		o := strings.ToUpper(strings.TrimSpace(h.Outcome))
+		if o == "" || seen[o] {
+			continue
+		}
+		seen[o] = true
+		sides = append(sides, o)
+	}
+	return sides
+}
+
+func formatPosSide(side string, holdings []PosHolding) string {
+	var people []PosHolding
+	for _, h := range holdings {
+		if strings.EqualFold(h.Outcome, side) {
+			people = append(people, h)
+		}
+	}
+	if len(people) == 0 {
+		return ""
+	}
+	px, hasPx := marketPriceForSide(people, side)
+	var b strings.Builder
+	b.WriteString(side)
+	b.WriteString(formatAtPrice(hasPx, px))
+	for _, h := range people {
+		fmt.Fprintf(&b, "\n%s %s%s", h.Name, formatShares(h.Size), formatAtPrice(h.HasAvg, h.AvgPrice))
+	}
+	return b.String()
 }

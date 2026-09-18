@@ -24,8 +24,8 @@ func TestBuildPosReportSortsByOverallYes(t *testing.T) {
 		"0xddd": {{Outcome: "Yes", Size: 0.1}}, // dust
 	}
 	r := BuildPosReport("Andersson", m, wallets, by, 0)
-	if r.OverallSide != "YES" || r.OverallSize != 58 { // 8 + -50 + 100
-		t.Fatalf("overall=%s %v", r.OverallSide, r.OverallSize)
+	if r.OverallSide != "YES" || r.OverallSize != 58 || !r.HasCur || r.CurPrice != 0.64 { // 8 + -50 + 100
+		t.Fatalf("overall=%s %v cur=%v", r.OverallSide, r.OverallSize, r.CurPrice)
 	}
 	if len(r.Holdings) != 3 {
 		t.Fatalf("holdings=%d %+v", len(r.Holdings), r.Holdings)
@@ -72,14 +72,14 @@ func TestBuildPosReportSortsByOverallNo(t *testing.T) {
 	if r.OverallSide != "NO" {
 		t.Fatalf("overall=%s %v", r.OverallSide, r.OverallSize)
 	}
-	if r.Holdings[0].Name != "Alice" || r.Holdings[0].Outcome != "NO" {
-		t.Fatalf("want largest NO first: %+v", r.Holdings)
+	if r.Holdings[0].Name != "Cara" || r.Holdings[0].Outcome != "YES" {
+		t.Fatalf("want largest YES first: %+v", r.Holdings)
 	}
-	if r.Holdings[1].Name != "Bob" {
-		t.Fatalf("want Bob next: %+v", r.Holdings)
+	if r.Holdings[1].Name != "Alice" {
+		t.Fatalf("want Alice next: %+v", r.Holdings)
 	}
-	if r.Holdings[2].Name != "Cara" || r.Holdings[2].Outcome != "YES" {
-		t.Fatalf("want Cara last: %+v", r.Holdings)
+	if r.Holdings[2].Name != "Bob" || r.Holdings[2].Outcome != "NO" {
+		t.Fatalf("want Bob last: %+v", r.Holdings)
 	}
 }
 
@@ -88,9 +88,12 @@ func TestFormatPosReport(t *testing.T) {
 		Title:       "Will Magdalena Andersson be the next Prime Minister of Sweden?",
 		OverallSize: 90,
 		OverallSide: "YES",
+		CurPrice:    0.64,
+		HasCur:      true,
 		Holdings: []PosHolding{
-			{Name: "Cara", Size: 100, Outcome: "YES", AvgPrice: 0.61, CurPrice: 0.64, HasAvg: true, HasCur: true},
-			{Name: "Bob", Size: 10, Outcome: "NO", AvgPrice: 0.21, CurPrice: 0.20, HasAvg: true, HasCur: true},
+			{Name: "Cara", Size: 100, Outcome: "YES", AvgPrice: 0.61, HasAvg: true, CurPrice: 0.64, HasCur: true},
+			{Name: "Alice", Size: 8, Outcome: "YES", AvgPrice: 0.60, HasAvg: true, CurPrice: 0.64, HasCur: true},
+			{Name: "Bob", Size: 50, Outcome: "NO", AvgPrice: 0.21, HasAvg: true, CurPrice: 0.20, HasCur: true},
 		},
 	})
 	if len(chunks) != 1 {
@@ -103,11 +106,21 @@ func TestFormatPosReport(t *testing.T) {
 	if !strings.HasPrefix(got, "Will Magdalena Andersson") {
 		t.Fatalf("head: %s", got)
 	}
-	if !strings.Contains(got, "Tracked net 90 YES") {
-		t.Fatalf("net: %s", got)
+	if strings.Contains(got, "Tracked net") {
+		t.Fatalf("no tracked-net line: %s", got)
 	}
-	if !strings.Contains(got, "100 YES  Cara | 61c → 64c") || !strings.Contains(got, "10 NO  Bob | 21c → 20c") {
-		t.Fatalf("lines: %s", got)
+	want := strings.Join([]string{
+		"Will Magdalena Andersson be the next Prime Minister of Sweden?",
+		"",
+		"YES @ 64c",
+		"Cara 100 @ 61c",
+		"Alice 8.0 @ 60c",
+		"",
+		"NO @ 20c",
+		"Bob 50 @ 21c",
+	}, "\n")
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 
 	empty := FormatPosReport(PosReport{Title: "Q"})
@@ -203,5 +216,8 @@ func TestFetchPosReport(t *testing.T) {
 	h := r.Holdings[0]
 	if !h.HasAvg || !h.HasCur || h.AvgPrice != 0.40 || h.CurPrice != 0.50 {
 		t.Fatalf("prices %+v", h)
+	}
+	if !r.HasCur || r.CurPrice != 0.50 {
+		t.Fatalf("market px %+v", r)
 	}
 }
