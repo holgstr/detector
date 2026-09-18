@@ -11,7 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
-// /port <trader> lists that wallet's open non-sports nets of $100+ (shares, live price vs cost).
+// /port <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price).
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size.

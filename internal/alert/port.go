@@ -420,25 +420,43 @@ func FormatPortReport(r PortReport) []string {
 		if title == "" {
 			title = "—"
 		}
-		line := fmt.Sprintf("%s %s  %s", formatShares(h.Size), h.Outcome, title)
-		if h.HasCur {
-			line += " | " + formatCents(h.CurPrice)
-			if h.HasAvg {
-				line += " " + formatCentsDelta(h.CurPrice-h.AvgPrice)
-			}
-		}
+		line := fmt.Sprintf("%s %s  %s%s", formatShares(h.Size), h.Outcome, title, formatAcqCur(h.HasAvg, h.HasCur, h.AvgPrice, h.CurPrice))
 		blocks = append(blocks, line)
 	}
 	return chunkTelegram(head, blocks)
 }
 
-func formatCentsDelta(d float64) string {
-	c := math.Round(d * 100)
-	if c > 0 {
-		return fmt.Sprintf("(+%.0fc)", c)
+func formatAcqCur(hasAvg, hasCur bool, avg, cur float64) string {
+	switch {
+	case hasAvg && hasCur:
+		return " | " + formatCents(avg) + " → " + formatCents(cur)
+	case hasAvg:
+		return " | " + formatCents(avg)
+	case hasCur:
+		return " | " + formatCents(cur)
+	default:
+		return ""
 	}
-	if c < 0 {
-		return fmt.Sprintf("(%.0fc)", c)
+}
+
+// primaryNetHolding nets one market's legs (already filtered) and keeps
+// acquisition / live prices the same way /port does.
+func primaryNetHolding(positions []polymarket.Position) (PortHolding, bool) {
+	cloned := append([]polymarket.Position(nil), positions...)
+	for i := range cloned {
+		if strings.TrimSpace(cloned[i].ConditionID) == "" && strings.TrimSpace(cloned[i].Slug) == "" {
+			cloned[i].ConditionID = "_"
+		}
 	}
-	return "(0c)"
+	nets := NetPortHoldings(cloned)
+	if len(nets) == 0 {
+		return PortHolding{}, false
+	}
+	best := nets[0]
+	for _, h := range nets[1:] {
+		if h.Size > best.Size {
+			best = h
+		}
+	}
+	return best, true
 }
