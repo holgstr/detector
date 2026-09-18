@@ -17,6 +17,7 @@ import (
 const (
 	gammaBase = "https://gamma-api.polymarket.com"
 	dataBase  = "https://data-api.polymarket.com"
+	clobBase  = "https://clob.polymarket.com"
 )
 
 // Client talks to Polymarket's public Gamma + Data APIs.
@@ -25,6 +26,7 @@ type Client struct {
 	Workers   int
 	DataBase  string // override data-api.polymarket.com (tests)
 	GammaBase string // override gamma-api.polymarket.com (tests)
+	ClobBase  string // override clob.polymarket.com (tests)
 
 	eventMu    sync.Mutex
 	eventCache map[string]EventMeta
@@ -90,7 +92,7 @@ func (c *Client) fetchMarketByCondition(ctx context.Context, conditionID string)
 }
 
 func (c *Client) fetchGammaBySlug(ctx context.Context, slug string) (gammaMarket, error) {
-	u := gammaBase + "/markets?slug=" + url.QueryEscape(slug)
+	u := c.gammaAPI() + "/markets?slug=" + url.QueryEscape(slug)
 	var markets []gammaMarket
 	if err := c.getJSON(ctx, u, &markets); err != nil {
 		return gammaMarket{}, err
@@ -102,7 +104,7 @@ func (c *Client) fetchGammaBySlug(ctx context.Context, slug string) (gammaMarket
 }
 
 func (c *Client) fetchGammaByCondition(ctx context.Context, conditionID string) (gammaMarket, error) {
-	u := gammaBase + "/markets?condition_ids=" + url.QueryEscape(conditionID)
+	u := c.gammaAPI() + "/markets?condition_ids=" + url.QueryEscape(conditionID)
 	var markets []gammaMarket
 	if err := c.getJSON(ctx, u, &markets); err != nil {
 		return gammaMarket{}, err
@@ -123,6 +125,7 @@ func toMarket(g gammaMarket) Market {
 		Slug:        g.Slug,
 		Question:    g.Question,
 		Outcomes:    outcomes,
+		TokenIDs:    parseJSONStringArray(g.ClobTokenIDs),
 	}
 	if len(g.Events) > 0 {
 		m.EventSlug = g.Events[0].Slug
