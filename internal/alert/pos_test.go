@@ -24,8 +24,8 @@ func TestBuildPosReportSortsByOverallYes(t *testing.T) {
 		"0xddd": {{Outcome: "Yes", Size: 0.1}}, // dust
 	}
 	r := BuildPosReport("Andersson", m, wallets, by, 0)
-	if r.OverallSide != "YES" || r.OverallSize != 58 { // 8 + -50 + 100
-		t.Fatalf("overall=%s %v", r.OverallSide, r.OverallSize)
+	if r.OverallSide != "YES" || r.OverallSize != 58 || !r.HasCur || r.CurPrice != 0.64 { // 8 + -50 + 100
+		t.Fatalf("overall=%s %v cur=%v", r.OverallSide, r.OverallSize, r.CurPrice)
 	}
 	if len(r.Holdings) != 3 {
 		t.Fatalf("holdings=%d %+v", len(r.Holdings), r.Holdings)
@@ -88,9 +88,11 @@ func TestFormatPosReport(t *testing.T) {
 		Title:       "Will Magdalena Andersson be the next Prime Minister of Sweden?",
 		OverallSize: 90,
 		OverallSide: "YES",
+		CurPrice:    0.64,
+		HasCur:      true,
 		Holdings: []PosHolding{
-			{Name: "Cara", Size: 100, Outcome: "YES", AvgPrice: 0.61, CurPrice: 0.64, HasAvg: true, HasCur: true},
-			{Name: "Bob", Size: 10, Outcome: "NO", AvgPrice: 0.21, CurPrice: 0.20, HasAvg: true, HasCur: true},
+			{Name: "Cara", Size: 100, Outcome: "YES", AvgPrice: 0.61, HasAvg: true},
+			{Name: "Bob", Size: 10, Outcome: "NO", AvgPrice: 0.21, HasAvg: true},
 		},
 	})
 	if len(chunks) != 1 {
@@ -103,11 +105,14 @@ func TestFormatPosReport(t *testing.T) {
 	if !strings.HasPrefix(got, "Will Magdalena Andersson") {
 		t.Fatalf("head: %s", got)
 	}
-	if !strings.Contains(got, "Tracked net 90 YES") {
+	if !strings.Contains(got, "Tracked net 90 YES @ 64c") {
 		t.Fatalf("net: %s", got)
 	}
-	if !strings.Contains(got, "100 YES  Cara | 61c → 64c") || !strings.Contains(got, "10 NO  Bob | 21c → 20c") {
+	if !strings.Contains(got, "100 YES @ 61c  Cara") || !strings.Contains(got, "10 NO @ 21c  Bob") {
 		t.Fatalf("lines: %s", got)
+	}
+	if strings.Contains(got, "→") || strings.Count(got, "@ 64c") != 1 {
+		t.Fatalf("market price should appear once, not per trader: %s", got)
 	}
 
 	empty := FormatPosReport(PosReport{Title: "Q"})
@@ -203,5 +208,8 @@ func TestFetchPosReport(t *testing.T) {
 	h := r.Holdings[0]
 	if !h.HasAvg || !h.HasCur || h.AvgPrice != 0.40 || h.CurPrice != 0.50 {
 		t.Fatalf("prices %+v", h)
+	}
+	if !r.HasCur || r.CurPrice != 0.50 {
+		t.Fatalf("market px %+v", r)
 	}
 }

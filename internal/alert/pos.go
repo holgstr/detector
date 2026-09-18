@@ -43,6 +43,8 @@ type PosReport struct {
 	URL           string
 	OverallSize   float64
 	OverallSide   string
+	CurPrice      float64
+	HasCur        bool
 	Holdings      []PosHolding
 	FailedWallets int
 }
@@ -113,7 +115,23 @@ func BuildPosReport(query string, market polymarket.SearchMarket, wallets []shar
 		rep.OverallSize = -overall
 		rep.OverallSide = "NO"
 	}
+	if px, ok := marketPriceForSide(holdings, rep.OverallSide); ok {
+		rep.CurPrice = px
+		rep.HasCur = true
+	}
 	return rep
+}
+
+func marketPriceForSide(holdings []PosHolding, side string) (float64, bool) {
+	if side == "" {
+		return 0, false
+	}
+	for _, h := range holdings {
+		if h.HasCur && strings.EqualFold(h.Outcome, side) {
+			return h.CurPrice, true
+		}
+	}
+	return 0, false
 }
 
 // resolvePosMarket picks a market for /pos. Explicit slugs, URLs, and condition
@@ -296,7 +314,7 @@ func FormatPosReport(r PosReport) []string {
 	}
 	head := title
 	if r.OverallSide != "" {
-		head += fmt.Sprintf("\nTracked net %s %s", formatShares(r.OverallSize), r.OverallSide)
+		head += fmt.Sprintf("\nTracked net %s %s%s", formatShares(r.OverallSize), r.OverallSide, formatAtPrice(r.HasCur, r.CurPrice))
 	}
 
 	if len(r.Holdings) == 0 {
@@ -309,7 +327,7 @@ func FormatPosReport(r PosReport) []string {
 
 	var blocks []string
 	for _, h := range r.Holdings {
-		blocks = append(blocks, fmt.Sprintf("%s %s  %s%s", formatShares(h.Size), h.Outcome, h.Name, formatAcqCur(h.HasAvg, h.HasCur, h.AvgPrice, h.CurPrice)))
+		blocks = append(blocks, fmt.Sprintf("%s %s%s  %s", formatShares(h.Size), h.Outcome, formatAtPrice(h.HasAvg, h.AvgPrice), h.Name))
 	}
 	if r.FailedWallets > 0 {
 		blocks = append(blocks, fmt.Sprintf("(%d wallet lookups failed.)", r.FailedWallets))

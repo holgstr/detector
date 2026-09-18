@@ -439,6 +439,13 @@ func formatAcqCur(hasAvg, hasCur bool, avg, cur float64) string {
 	}
 }
 
+func formatAtPrice(ok bool, p float64) string {
+	if !ok {
+		return ""
+	}
+	return " @ " + formatCents(p)
+}
+
 // primaryNetHolding nets one market's legs (already filtered) and keeps
 // acquisition / live prices the same way /port does.
 func primaryNetHolding(positions []polymarket.Position) (PortHolding, bool) {
