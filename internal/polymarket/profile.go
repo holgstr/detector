@@ -46,6 +46,13 @@ func (c *Client) gammaAPI() string {
 	return gammaBase
 }
 
+func (c *Client) clobAPI() string {
+	if c != nil && strings.TrimSpace(c.ClobBase) != "" {
+		return strings.TrimRight(c.ClobBase, "/")
+	}
+	return clobBase
+}
+
 // SearchUsers finds leaderboard profiles whose username matches query.
 // Identity is always the proxy wallet; names are only a lookup key.
 func (c *Client) SearchUsers(ctx context.Context, query string) ([]UserProfile, error) {

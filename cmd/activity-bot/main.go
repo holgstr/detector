@@ -13,6 +13,8 @@
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /port <trader> lists that wallet's open non-sports nets of $100+ (shares, live price vs cost).
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
+// /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
+// /ob <market> prints the 4 closest CLOB ticks on each side with size.
 // /tracked lists watched names; /add and /unadd take a wallet id or name (name → current id).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
@@ -333,6 +335,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdLastTrades {
 		replyLastTrades(ctx, tg, api, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdOB {
+		replyOB(ctx, tg, api, chatID, cmd)
+	}
 	if cmd.Cmd == alert.CmdTracked {
 		replyTracked(ctx, tg, chatID)
 	}
@@ -359,6 +364,12 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 		}
 	case alert.CmdHelp:
 		replies = append(replies, alert.HelpText(min))
+	case alert.CmdKelly:
+		if cmd.Price == 0 && cmd.FV == 0 {
+			replies = append(replies, alert.KellyUsage)
+		} else {
+			replies = append(replies, alert.KellyText(cmd.Price, cmd.FV))
+		}
 	case alert.CmdNone:
 		if !first {
 			replies = append(replies, "Still here. /help for commands.")
@@ -368,7 +379,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest ticks on each side.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.List()), alert.MinSizeStatus(minUSD))
 }
 
@@ -610,6 +621,38 @@ func replyLastTrades(ctx context.Context, tg *telegram.Client, api *polymarket.C
 		}
 	}
 	log.Printf("lasttrades %s trader=%q market=%q fills=%d", rep.Window, cmd.Trader, cmd.Market, len(rep.Trades))
+}
+
+func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /ob <market> — words, slug, or URL."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchOBReport(ctx, api, query)
+	if err != nil && len(rep.Books) == 0 {
+		msg := fmt.Sprintf("No active market matching %q.", query)
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "resolved") {
+			msg = fmt.Sprintf("%q is resolved, not an active market.", query)
+		} else if !strings.Contains(low, "active market") && !strings.Contains(low, "no active") {
+			msg = fmt.Sprintf("Couldn't load order book: %v", err)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	text := alert.FormatOBReport(rep)
+	if err != nil {
+		text += fmt.Sprintf("\n(partial fetch: %v)", err)
+	}
+	if err := tg.SendMessage(ctx, chatID, text); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("ob query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
 }
 
 func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {

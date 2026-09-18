@@ -6,6 +6,7 @@ type Market struct {
 	Slug        string   `json:"slug"`
 	Question    string   `json:"question"`
 	Outcomes    []string `json:"outcomes"`
+	TokenIDs    []string `json:"token_ids,omitempty"`
 	EventSlug   string   `json:"event_slug,omitempty"`
 	URL         string   `json:"url,omitempty"`
 }
