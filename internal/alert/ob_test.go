@@ -43,7 +43,7 @@ func TestFormatOBReport(t *testing.T) {
 	want := strings.Join([]string{
 		"Aliens?",
 		"",
-		"46¢  5.0",
+		"46¢    5",
 		"44¢   20",
 		"43¢   10",
 		"- - -",

@@ -98,7 +98,7 @@ func formatBookLadder(book polymarket.OutcomeBook) string {
 	rows := make([][2]string, 0, len(asks)+len(bids))
 	appendLevels := func(levels []polymarket.BookLevel) {
 		for _, lv := range levels {
-			rows = append(rows, [2]string{formatTickPrice(lv.Price, book.Tick), formatShares(lv.Size)})
+			rows = append(rows, [2]string{formatTickPrice(lv.Price, book.Tick), formatTickSize(lv.Size)})
 		}
 	}
 	appendLevels(asks)
@@ -119,7 +119,7 @@ func formatBookLadder(book polymarket.OutcomeBook) string {
 			b.WriteByte('\n')
 			b.WriteString(padRunes(formatTickPrice(lv.Price, book.Tick), priceW))
 			b.WriteString("  ")
-			b.WriteString(padRunes(formatShares(lv.Size), sizeW))
+			b.WriteString(padRunes(formatTickSize(lv.Size), sizeW))
 		}
 	}
 	writeLevels(asks)
@@ -157,4 +157,11 @@ func formatTickPrice(p, tick float64) string {
 		return fmt.Sprintf("%.1f¢", cents)
 	}
 	return fmt.Sprintf("%.0f¢", cents)
+}
+
+func formatTickSize(n float64) string {
+	if n >= 1000 {
+		return formatShares(n)
+	}
+	return fmt.Sprintf("%.0f", n)
 }
