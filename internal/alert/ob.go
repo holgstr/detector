@@ -13,7 +13,7 @@ type obMarketAPI interface {
 	FetchOutcomeBooks(ctx context.Context, conditionID string) ([]polymarket.OutcomeBook, error)
 }
 
-// OBReport is /ob output: inside depth for each outcome.
+// OBReport is /ob output: inside depth (Yes only when the market is Yes/No).
 type OBReport struct {
 	Query string
 	Title string
@@ -48,6 +48,7 @@ func FetchOBReport(ctx context.Context, api obMarketAPI, query string) (OBReport
 }
 
 // FormatOBReport is the Telegram body for /ob.
+// Yes/No books are symmetric, so only Yes is shown and the outcome is omitted.
 func FormatOBReport(r OBReport) string {
 	title := strings.TrimSpace(r.Title)
 	if title == "" {
@@ -59,34 +60,93 @@ func FormatOBReport(r OBReport) string {
 	var b strings.Builder
 	b.WriteString("Order book · ")
 	b.WriteString(title)
-	if len(r.Books) == 0 {
+	books := booksToShow(r.Books)
+	if len(books) == 0 {
 		b.WriteString("\nNo CLOB depth.")
 		return b.String()
 	}
-	for _, book := range r.Books {
-		b.WriteByte('\n')
-		b.WriteString(strings.ToUpper(strings.TrimSpace(book.Outcome)))
-		b.WriteString("\n  Asks  ")
-		b.WriteString(formatBookSide(book.Asks, book.Tick))
-		b.WriteString("\n  Bids  ")
-		b.WriteString(formatBookSide(book.Bids, book.Tick))
+	nameOutcomes := !(len(books) == 1 && isYesOutcome(books[0].Outcome))
+	for _, book := range books {
+		if nameOutcomes {
+			b.WriteByte('\n')
+			b.WriteString(strings.ToUpper(strings.TrimSpace(book.Outcome)))
+		}
+		b.WriteString(formatBookLadder(book))
 	}
 	return b.String()
 }
 
-func formatBookSide(levels []polymarket.BookLevel, tick float64) string {
-	if len(levels) == 0 {
-		return "none"
-	}
-	parts := make([]string, 0, len(levels))
-	for _, lv := range levels {
-		size := "—"
-		if lv.Size > 0 {
-			size = formatShares(lv.Size)
+func booksToShow(books []polymarket.OutcomeBook) []polymarket.OutcomeBook {
+	for _, book := range books {
+		if isYesOutcome(book.Outcome) {
+			return []polymarket.OutcomeBook{book}
 		}
-		parts = append(parts, fmt.Sprintf("%s %s", formatTickPrice(lv.Price, tick), size))
 	}
-	return strings.Join(parts, " · ")
+	return books
+}
+
+func isYesOutcome(outcome string) bool {
+	return strings.EqualFold(strings.TrimSpace(outcome), "yes")
+}
+
+func formatBookLadder(book polymarket.OutcomeBook) string {
+	asks := append([]polymarket.BookLevel(nil), book.Asks...)
+	for i, j := 0, len(asks)-1; i < j; i, j = i+1, j-1 {
+		asks[i], asks[j] = asks[j], asks[i]
+	}
+	rows := make([][2]string, 0, len(asks)+len(book.Bids))
+	appendLevels := func(levels []polymarket.BookLevel) {
+		for _, lv := range levels {
+			rows = append(rows, [2]string{formatTickPrice(lv.Price, book.Tick), formatTickSize(lv.Size)})
+		}
+	}
+	appendLevels(asks)
+	appendLevels(book.Bids)
+	priceW, sizeW := 0, 0
+	for _, row := range rows {
+		if n := len([]rune(row[0])); n > priceW {
+			priceW = n
+		}
+		if n := len([]rune(row[1])); n > sizeW {
+			sizeW = n
+		}
+	}
+
+	var b strings.Builder
+	writeSide := func(label string, levels []polymarket.BookLevel) {
+		if len(levels) == 0 {
+			return
+		}
+		b.WriteByte('\n')
+		b.WriteString(label)
+		for _, lv := range levels {
+			b.WriteByte('\n')
+			b.WriteString(padRunes(formatTickPrice(lv.Price, book.Tick), priceW))
+			b.WriteString("  ")
+			b.WriteString(padRunes(formatTickSize(lv.Size), sizeW))
+		}
+	}
+	writeSide("Asks", asks)
+	writeSide("Bids", book.Bids)
+	if len(asks) == 0 && len(book.Bids) == 0 {
+		b.WriteString("\nNo CLOB depth.")
+	}
+	return b.String()
+}
+
+func formatTickSize(n float64) string {
+	if n <= 0 {
+		return "—"
+	}
+	return formatShares(n)
+}
+
+func padRunes(s string, width int) string {
+	n := len([]rune(s))
+	if n >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-n) + s
 }
 
 func formatTickPrice(p, tick float64) string {
