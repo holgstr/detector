@@ -82,7 +82,10 @@ func TestFormatPosReport(t *testing.T) {
 		t.Fatalf("chunks=%d", len(chunks))
 	}
 	got := chunks[0]
-	if !strings.Contains(got, "Holdings · Will Magdalena Andersson") {
+	if strings.Contains(got, "Holdings") {
+		t.Fatalf("should start with market name, not Holdings: %s", got)
+	}
+	if !strings.HasPrefix(got, "Will Magdalena Andersson") {
 		t.Fatalf("head: %s", got)
 	}
 	if !strings.Contains(got, "Tracked net 90 YES") {

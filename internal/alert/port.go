@@ -421,24 +421,15 @@ func FormatPortReport(r PortReport) []string {
 			title = "—"
 		}
 		line := fmt.Sprintf("%s %s  %s", formatShares(h.Size), h.Outcome, title)
-		if h.HasCur {
+		switch {
+		case h.HasAvg && h.HasCur:
+			line += " | " + formatCents(h.AvgPrice) + " → " + formatCents(h.CurPrice)
+		case h.HasAvg:
+			line += " | " + formatCents(h.AvgPrice)
+		case h.HasCur:
 			line += " | " + formatCents(h.CurPrice)
-			if h.HasAvg {
-				line += " " + formatCentsDelta(h.CurPrice-h.AvgPrice)
-			}
 		}
 		blocks = append(blocks, line)
 	}
 	return chunkTelegram(head, blocks)
-}
-
-func formatCentsDelta(d float64) string {
-	c := math.Round(d * 100)
-	if c > 0 {
-		return fmt.Sprintf("(+%.0fc)", c)
-	}
-	if c < 0 {
-		return fmt.Sprintf("(%.0fc)", c)
-	}
-	return "(0c)"
 }

@@ -107,6 +107,8 @@ func TestFormatPortReport(t *testing.T) {
 		Holdings: []PortHolding{
 			{Title: "Market A", Size: 8600, Outcome: "YES", CurPrice: 0.64, AvgPrice: 0.61, HasCur: true, HasAvg: true},
 			{Title: "Market B", Size: 3400, Outcome: "NO", CurPrice: 0.20, AvgPrice: 0.21, HasCur: true, HasAvg: true},
+			{Title: "Market C", Size: 200, Outcome: "YES", AvgPrice: 0.40, HasAvg: true},
+			{Title: "Market D", Size: 300, Outcome: "NO", CurPrice: 0.55, HasCur: true},
 		},
 	})
 	if len(chunks) != 1 {
@@ -116,11 +118,17 @@ func TestFormatPortReport(t *testing.T) {
 	if !strings.Contains(got, "Portfolio · Alice") {
 		t.Fatalf("head: %s", got)
 	}
-	if !strings.Contains(got, "8.6k YES  Market A | 64c (+3c)") {
+	if !strings.Contains(got, "8.6k YES  Market A | 61c → 64c") {
 		t.Fatalf("A: %s", got)
 	}
-	if !strings.Contains(got, "3.4k NO  Market B | 20c (-1c)") {
+	if !strings.Contains(got, "3.4k NO  Market B | 21c → 20c") {
 		t.Fatalf("B: %s", got)
+	}
+	if !strings.Contains(got, "200 YES  Market C | 40c") {
+		t.Fatalf("C: %s", got)
+	}
+	if !strings.Contains(got, "300 NO  Market D | 55c") {
+		t.Fatalf("D: %s", got)
 	}
 
 	empty := FormatPortReport(PortReport{Name: "Alice"})

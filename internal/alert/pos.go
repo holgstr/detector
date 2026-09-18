@@ -286,7 +286,7 @@ func FormatPosReport(r PosReport) []string {
 	if title == "" {
 		title = strings.TrimSpace(r.Query)
 	}
-	head := "Holdings · " + title
+	head := title
 	if r.OverallSide != "" {
 		head += fmt.Sprintf("\nTracked net %s %s", formatShares(r.OverallSize), r.OverallSide)
 	}
