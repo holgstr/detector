@@ -37,6 +37,10 @@ type State struct {
 	ExtraWallets []sharps.Wallet `json:"extra_wallets,omitempty"`
 	// Untracked are seed addresses removed with /unadd.
 	Untracked []string `json:"untracked,omitempty"`
+	// PendingPriceAlert is a /alert market waiting for ask price + min size.
+	PendingPriceAlert *PriceAlertDraft `json:"pending_price_alert,omitempty"`
+	// PriceAlerts are live Yes-ask size watches (take side).
+	PriceAlerts []PriceAlert `json:"price_alerts,omitempty"`
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.

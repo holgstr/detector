@@ -15,6 +15,9 @@
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size.
+// /alert <market> finds a market then asks for a Yes ask price and min size;
+// it pings once when that size is sitting at that price or lower (take), then every 1h.
+// /unalert <market> stops a watch. /cancel aborts the confirm step.
 // /tracked lists watched names; /add and /unadd take a wallet id or name (name → current id).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
@@ -209,6 +212,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 		n := len(b.state.Seen)
 		b.mu.Unlock()
 		log.Printf("seeded %d fills; waiting for new non-sports trades", n)
+		if err := runPriceAlerts(ctx, api, tg, b, dryRun); err != nil {
+			log.Printf("price alerts: %v", err)
+		}
 		return nil
 	}
 	alerts := plan.Alerts
@@ -221,6 +227,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 		b.mu.Unlock()
 		if n == 1 || n%15 == 0 {
 			log.Printf("poll quiet (%d in a row, min %s)", n, formatMin(minUSD))
+		}
+		if err := runPriceAlerts(ctx, api, tg, b, dryRun); err != nil {
+			log.Printf("price alerts: %v", err)
 		}
 		return nil
 	}
@@ -249,6 +258,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 		sent++
 	}
 	log.Printf("sent %d/%d alerts", sent, len(alerts))
+	if err := runPriceAlerts(ctx, api, tg, b, dryRun); err != nil {
+		log.Printf("price alerts: %v", err)
+	}
 	return nil
 }
 
@@ -311,12 +323,21 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 		min = cmd.MinUSD
 		log.Printf("min size set to %s", formatMin(min))
 	}
+	pending := b.state.PendingPriceAlert != nil
+	if pending && cmd.Cmd != alert.CmdNone && cmd.Cmd != alert.CmdAlert && cmd.Cmd != alert.CmdUnalert && cmd.Cmd != alert.CmdCancel {
+		b.state.ClearPendingPriceAlert()
+	}
 	chatID := b.state.ChatID
 	if err := alert.SaveState(b.path, b.state); err != nil {
 		log.Printf("save state: %v", err)
 	}
 	log.Printf("chat %d text=%q cmd=%d first=%v", chatID, u.Message.Text, cmd.Cmd, first)
 	b.mu.Unlock()
+
+	if pending && cmd.Cmd == alert.CmdNone {
+		replyAlertConfirm(ctx, tg, b, chatID, u.Message.Text)
+		return
+	}
 
 	for _, text := range commandReplies(first, cmd, min) {
 		if err := tg.SendMessage(ctx, chatID, text); err != nil {
@@ -337,6 +358,15 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdOB {
 		replyOB(ctx, tg, api, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdAlert {
+		replyAlert(ctx, tg, api, b, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdUnalert {
+		replyUnalert(ctx, tg, b, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdCancel {
+		replyCancel(ctx, tg, b, chatID)
 	}
 	if cmd.Cmd == alert.CmdTracked {
 		replyTracked(ctx, tg, chatID)
@@ -379,7 +409,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/alert <market> then ask price and min size for a Yes take watch.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.List()), alert.MinSizeStatus(minUSD))
 }
 
@@ -653,6 +683,191 @@ func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, c
 		log.Printf("reply: %v", err)
 	}
 	log.Printf("ob query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
+}
+
+func runPriceAlerts(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b *bot, dryRun bool) error {
+	b.mu.Lock()
+	alerts := append([]alert.PriceAlert(nil), b.state.PriceAlerts...)
+	chatID := b.state.ChatID
+	b.mu.Unlock()
+	if len(alerts) == 0 {
+		return nil
+	}
+	fired, next := alert.CheckPriceAlerts(ctx, api, alerts, time.Now())
+	b.mu.Lock()
+	b.state.ApplyPriceAlertPoll(next)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	armed := &alert.State{PriceAlerts: append([]alert.PriceAlert(nil), b.state.PriceAlerts...)}
+	b.mu.Unlock()
+
+	sent := 0
+	for _, hit := range fired {
+		if !alert.PriceAlertStillArmed(armed, hit.Alert) {
+			continue
+		}
+		text := alert.PriceAlertPingText(hit.Alert, hit.Size)
+		if dryRun {
+			fmt.Println(text)
+			fmt.Println("---")
+			sent++
+			continue
+		}
+		if tg == nil || chatID == 0 {
+			continue
+		}
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("price alert %s: %v", hit.Alert.Title, err)
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		log.Printf("sent %d price alerts", sent)
+	}
+	return nil
+}
+
+func replyAlert(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		b.mu.Lock()
+		list := alert.FormatPriceAlertList(b.state.PriceAlerts)
+		b.mu.Unlock()
+		if err := tg.SendMessage(ctx, chatID, list); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+
+	draft, errMsg := alert.ResolvePriceAlertMarket(ctx, api, query)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+
+	if cmd.Price > 0 && cmd.MinSize > 0 {
+		row := alert.PriceAlert{
+			Title:       draft.Title,
+			Slug:        draft.Slug,
+			URL:         draft.URL,
+			ConditionID: draft.ConditionID,
+			Price:       cmd.Price,
+			MinSize:     cmd.MinSize,
+		}
+		b.mu.Lock()
+		b.state.UpsertPriceAlert(row)
+		if err := alert.SaveState(b.path, b.state); err != nil {
+			log.Printf("save state: %v", err)
+		}
+		b.mu.Unlock()
+		if err := tg.SendMessage(ctx, chatID, alert.PriceAlertSetText(row)); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		log.Printf("price alert set market=%q price=%.4f min=%.0f", row.Title, row.Price, row.MinSize)
+		return
+	}
+
+	b.mu.Lock()
+	d := draft
+	b.state.PendingPriceAlert = &d
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	b.mu.Unlock()
+	if err := tg.SendMessage(ctx, chatID, alert.PriceAlertPrompt(draft)); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("price alert pending market=%q", draft.Title)
+}
+
+func replyAlertConfirm(ctx context.Context, tg *telegram.Client, b *bot, chatID int64, text string) {
+	price, minSize, ok := alert.ParseAlertConfirm(text)
+	b.mu.Lock()
+	draft := b.state.PendingPriceAlert
+	if !ok || draft == nil {
+		b.mu.Unlock()
+		if err := tg.SendMessage(ctx, chatID, "Send ask price and min size, e.g. 32 1000 — or /cancel."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	row := alert.PriceAlert{
+		Title:       draft.Title,
+		Slug:        draft.Slug,
+		URL:         draft.URL,
+		ConditionID: draft.ConditionID,
+		Price:       price,
+		MinSize:     minSize,
+	}
+	b.state.UpsertPriceAlert(row)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	b.mu.Unlock()
+	if err := tg.SendMessage(ctx, chatID, alert.PriceAlertSetText(row)); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("price alert set market=%q price=%.4f min=%.0f", row.Title, row.Price, row.MinSize)
+}
+
+func replyUnalert(ctx context.Context, tg *telegram.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	b.mu.Lock()
+	got, ok := b.state.RemovePriceAlert(query)
+	if !ok {
+		n := len(b.state.PriceAlerts)
+		list := alert.FormatPriceAlertList(b.state.PriceAlerts)
+		b.mu.Unlock()
+		msg := "No matching price alert."
+		if query == "" && n > 1 {
+			msg = "Which alert? /unalert <market>\n" + list
+		} else if n == 0 {
+			msg = list
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	b.state.ClearPendingPriceAlert()
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	title := strings.TrimSpace(got.Title)
+	if title == "" {
+		title = got.Slug
+	}
+	n := len(b.state.PriceAlerts)
+	b.mu.Unlock()
+	msg := fmt.Sprintf("Stopped price alert on %s.", title)
+	if n > 0 {
+		msg += fmt.Sprintf(" %d left.", n)
+	}
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("price alert removed market=%q", title)
+}
+
+func replyCancel(ctx context.Context, tg *telegram.Client, b *bot, chatID int64) {
+	b.mu.Lock()
+	had := b.state.PendingPriceAlert != nil
+	b.state.ClearPendingPriceAlert()
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	b.mu.Unlock()
+	msg := "Nothing to cancel."
+	if had {
+		msg = "Cancelled. No price alert set."
+	}
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
 }
 
 func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
