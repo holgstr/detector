@@ -107,20 +107,20 @@ func TestFetchOutcomeBooks(t *testing.T) {
 	}
 }
 
-func TestBidSizeAtOrBelow(t *testing.T) {
+func TestSizeAtOrBelow(t *testing.T) {
 	levels := []BookLevel{
 		{Price: 0.42, Size: 50},
 		{Price: 0.40, Size: 100},
 		{Price: 0.32, Size: 1000},
 		{Price: 0.31, Size: 10},
 	}
-	if got := BidSizeAtOrBelow(levels, 0.32); mathAbs(got-1010) > 1e-9 {
+	if got := SizeAtOrBelow(levels, 0.32); mathAbs(got-1010) > 1e-9 {
 		t.Fatalf("32c or lower: %v", got)
 	}
-	if got := BidSizeAtOrBelow(levels, 0.40); mathAbs(got-1110) > 1e-9 {
+	if got := SizeAtOrBelow(levels, 0.40); mathAbs(got-1110) > 1e-9 {
 		t.Fatalf("40c or lower: %v", got)
 	}
-	if got := BidSizeAtOrBelow(levels, 0.20); got != 0 {
+	if got := SizeAtOrBelow(levels, 0.20); got != 0 {
 		t.Fatalf("too high: %v", got)
 	}
 }
@@ -144,12 +144,12 @@ func TestFetchYesBookUsesFullDepth(t *testing.T) {
 		}
 		book := clobBookResponse{
 			TickSize: flexNumber{V: 0.01},
-			Bids: []clobLevel{
-				{Price: flexNumber{V: 0.42}, Size: flexNumber{V: 50}},
-				{Price: flexNumber{V: 0.40}, Size: flexNumber{V: 100}},
-				{Price: flexNumber{V: 0.39}, Size: flexNumber{V: 10}},
-				{Price: flexNumber{V: 0.38}, Size: flexNumber{V: 5}},
-				{Price: flexNumber{V: 0.32}, Size: flexNumber{V: 1000}},
+			Asks: []clobLevel{
+				{Price: flexNumber{V: 0.32}, Size: flexNumber{V: 400}},
+				{Price: flexNumber{V: 0.33}, Size: flexNumber{V: 50}},
+				{Price: flexNumber{V: 0.34}, Size: flexNumber{V: 10}},
+				{Price: flexNumber{V: 0.35}, Size: flexNumber{V: 5}},
+				{Price: flexNumber{V: 0.40}, Size: flexNumber{V: 1000}},
 			},
 		}
 		_ = json.NewEncoder(w).Encode(book)
@@ -163,11 +163,11 @@ func TestFetchYesBookUsesFullDepth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Outcome != "Yes" || len(got.Bids) != 5 {
+	if got.Outcome != "Yes" || len(got.Asks) != 5 {
 		t.Fatalf("%+v", got)
 	}
-	if mathAbs(BidSizeAtOrBelow(got.Bids, 0.32)-1000) > 1e-9 {
-		t.Fatalf("size=%v bids=%+v", BidSizeAtOrBelow(got.Bids, 0.32), got.Bids)
+	if mathAbs(SizeAtOrBelow(got.Asks, 0.32)-400) > 1e-9 {
+		t.Fatalf("size=%v asks=%+v", SizeAtOrBelow(got.Asks, 0.32), got.Asks)
 	}
 }
 

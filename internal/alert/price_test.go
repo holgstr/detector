@@ -67,10 +67,26 @@ func TestShouldFirePriceAlert(t *testing.T) {
 	}
 }
 
+func TestCheckPriceAlertsIgnoresBids(t *testing.T) {
+	api := &fakeAlertAPI{book: polymarket.OutcomeBook{
+		Outcome: "Yes",
+		Bids:    []polymarket.BookLevel{{Price: 0.32, Size: 99999}},
+		Asks:    []polymarket.BookLevel{{Price: 0.40, Size: 10}},
+	}}
+	alerts := []PriceAlert{{ConditionID: "0xabc", Price: 0.32, MinSize: 1000}}
+	fired, _ := CheckPriceAlerts(context.Background(), api, alerts, time.Unix(10, 0))
+	if len(fired) != 0 {
+		t.Fatalf("bids must not trigger take alert: %+v", fired)
+	}
+}
+
 func TestCheckPriceAlertsFiresThenCooldown(t *testing.T) {
 	api := &fakeAlertAPI{book: polymarket.OutcomeBook{
 		Outcome: "Yes",
 		Bids: []polymarket.BookLevel{
+			{Price: 0.32, Size: 99999},
+		},
+		Asks: []polymarket.BookLevel{
 			{Price: 0.32, Size: 400},
 			{Price: 0.30, Size: 700},
 		},
@@ -131,11 +147,11 @@ func TestUpsertAndRemovePriceAlert(t *testing.T) {
 
 func TestPriceAlertPromptAndPing(t *testing.T) {
 	text := PriceAlertPrompt(PriceAlertDraft{Title: "Aliens?", URL: "https://polymarket.com/event/x"})
-	if !strings.Contains(text, "Aliens?") || !strings.Contains(text, "32 1000") {
+	if !strings.Contains(text, "Aliens?") || !strings.Contains(text, "32 1000") || !strings.Contains(text, "asks") {
 		t.Fatalf("%q", text)
 	}
 	ping := PriceAlertPingText(PriceAlert{Title: "Aliens?", Price: 0.32, MinSize: 1000}, 1500)
-	if !strings.Contains(ping, "Bid alert") || !strings.Contains(ping, "1.5k") || !strings.Contains(ping, "32¢") {
+	if !strings.Contains(ping, "Ask alert") || !strings.Contains(ping, "1.5k") || !strings.Contains(ping, "32¢") {
 		t.Fatalf("%q", ping)
 	}
 	list := FormatPriceAlertList(nil)

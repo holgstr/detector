@@ -14,7 +14,7 @@ import (
 // PriceAlertRepeat is the cooldown between pings while the book still qualifies.
 const PriceAlertRepeat = time.Hour
 
-const priceAlertConfirmHint = "Reply with bid price and min size, e.g. 32 1000 (32¢, 1000 shares). /cancel to abort."
+const priceAlertConfirmHint = "Reply with ask price and min size, e.g. 32 1000 (32¢, 1000 shares to take). /cancel to abort."
 
 // PriceAlertDraft is an unresolved /alert <market> waiting for price + min size.
 type PriceAlertDraft struct {
@@ -25,7 +25,7 @@ type PriceAlertDraft struct {
 	ConditionID string `json:"condition_id,omitempty"`
 }
 
-// PriceAlert watches Yes bid size at Price or lower.
+// PriceAlert watches Yes ask size at Price or lower (size you can take).
 type PriceAlert struct {
 	Title            string  `json:"title,omitempty"`
 	Slug             string  `json:"slug,omitempty"`
@@ -58,7 +58,7 @@ func PriceAlertPrompt(d PriceAlertDraft) string {
 		title = d.Query
 	}
 	var b strings.Builder
-	b.WriteString("Watch Yes bids on:\n")
+	b.WriteString("Watch Yes asks (take) on:\n")
 	b.WriteString(title)
 	if u := strings.TrimSpace(d.URL); u != "" {
 		b.WriteByte('\n')
@@ -76,7 +76,7 @@ func PriceAlertSetText(a PriceAlert) string {
 		title = a.Slug
 	}
 	return fmt.Sprintf(
-		"Alert set · %s\nPing when Yes bids at %s or lower total ≥ %s shares.\nFirst hit once, then every 1h while it stays. /unalert to stop.",
+		"Alert set · %s\nPing when Yes asks at %s or lower total ≥ %s shares (take).\nFirst hit once, then every 1h while it stays. /unalert to stop.",
 		title,
 		formatTickPrice(a.Price, 0.01),
 		formatTickSize(a.MinSize),
@@ -90,7 +90,7 @@ func PriceAlertPingText(a PriceAlert, size float64) string {
 		title = a.Slug
 	}
 	return fmt.Sprintf(
-		"Bid alert · %s\n%s shares at %s or lower (need %s)",
+		"Ask alert · %s\n%s shares at %s or lower (need %s)",
 		title,
 		formatTickSize(size),
 		formatTickPrice(a.Price, 0.01),
@@ -101,7 +101,7 @@ func PriceAlertPingText(a PriceAlert, size float64) string {
 // FormatPriceAlertList is /alert with no args.
 func FormatPriceAlertList(alerts []PriceAlert) string {
 	if len(alerts) == 0 {
-		return "No price alerts. /alert <market> then reply with bid price and min size."
+		return "No price alerts. /alert <market> then reply with ask price and min size."
 	}
 	var b strings.Builder
 	b.WriteString("Price alerts:")
@@ -110,7 +110,7 @@ func FormatPriceAlertList(alerts []PriceAlert) string {
 		if title == "" {
 			title = a.Slug
 		}
-		b.WriteString(fmt.Sprintf("\n%s — %s or lower, min %s", title, formatTickPrice(a.Price, 0.01), formatTickSize(a.MinSize)))
+		b.WriteString(fmt.Sprintf("\n%s — take %s or lower, min %s", title, formatTickPrice(a.Price, 0.01), formatTickSize(a.MinSize)))
 	}
 	b.WriteString("\n/unalert <market> to stop one. /alert <market> to add.")
 	return b.String()
@@ -335,7 +335,7 @@ func CheckPriceAlerts(ctx context.Context, api yesBookAPI, alerts []PriceAlert, 
 		if oc := strings.TrimSpace(book.Outcome); oc != "" {
 			a.Outcome = oc
 		}
-		size := polymarket.BidSizeAtOrBelow(book.Bids, a.Price)
+		size := polymarket.SizeAtOrBelow(book.Asks, a.Price)
 		if ShouldFirePriceAlert(a, size, now) {
 			a.LastNotifiedUnix = now.Unix()
 			fired = append(fired, PriceAlertHit{Alert: a, Size: size})
@@ -349,7 +349,7 @@ func CheckPriceAlerts(ctx context.Context, api yesBookAPI, alerts []PriceAlert, 
 func ResolvePriceAlertMarket(ctx context.Context, api yesBookAPI, query string) (PriceAlertDraft, string) {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return PriceAlertDraft{}, "Usage: /alert <market> — then reply with bid price and min size."
+		return PriceAlertDraft{}, "Usage: /alert <market> — then reply with ask price and min size."
 	}
 	hit, err := api.FindMarket(ctx, query)
 	if err != nil {

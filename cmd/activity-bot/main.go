@@ -15,8 +15,8 @@
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size.
-// /alert <market> finds a market then asks for a Yes bid price and min size;
-// it pings once when that size is sitting at that price or lower, then every 1h.
+// /alert <market> finds a market then asks for a Yes ask price and min size;
+// it pings once when that size is sitting at that price or lower (take), then every 1h.
 // /unalert <market> stops a watch. /cancel aborts the confirm step.
 // /tracked lists watched names; /add and /unadd take a wallet id or name (name → current id).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
@@ -409,7 +409,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/alert <market> then bid price and min size for a Yes bid watch.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/alert <market> then ask price and min size for a Yes take watch.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.List()), alert.MinSizeStatus(minUSD))
 }
 
@@ -790,7 +790,7 @@ func replyAlertConfirm(ctx context.Context, tg *telegram.Client, b *bot, chatID 
 	draft := b.state.PendingPriceAlert
 	if !ok || draft == nil {
 		b.mu.Unlock()
-		if err := tg.SendMessage(ctx, chatID, "Send bid price and min size, e.g. 32 1000 — or /cancel."); err != nil {
+		if err := tg.SendMessage(ctx, chatID, "Send ask price and min size, e.g. 32 1000 — or /cancel."); err != nil {
 			log.Printf("reply: %v", err)
 		}
 		return

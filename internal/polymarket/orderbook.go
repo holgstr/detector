@@ -193,8 +193,8 @@ func outcomeBookFromClob(outcome, tokenID string, book clobBookResponse, depth i
 	}
 }
 
-// BidSizeAtOrBelow is total bid size at maxPrice and every cheaper tick.
-func BidSizeAtOrBelow(levels []BookLevel, maxPrice float64) float64 {
+// SizeAtOrBelow is total size at maxPrice and every cheaper tick.
+func SizeAtOrBelow(levels []BookLevel, maxPrice float64) float64 {
 	var n float64
 	for _, lv := range levels {
 		if lv.Size > 0 && lv.Price <= maxPrice+1e-12 {

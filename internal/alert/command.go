@@ -116,7 +116,7 @@ func ParseCommand(text string) ParsedCommand {
 		return ParsedCommand{Cmd: CmdKelly, Price: price, FV: fv}
 	case "ob", "orderbook", "order-book", "order_book", "book":
 		return ParsedCommand{Cmd: CmdOB, Market: strings.TrimSpace(rest)}
-	case "alert", "pricealert", "price-alert", "bidalert", "bid-alert":
+	case "alert", "pricealert", "price-alert", "askalert", "ask-alert", "bidalert", "bid-alert":
 		return parseAlertCommand(rest)
 	case "unalert", "un-alert", "delalert", "stopalert":
 		return ParsedCommand{Cmd: CmdUnalert, Market: strings.TrimSpace(rest)}
@@ -298,7 +298,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words, slug, or URL)\n/alert <market> — watch Yes bids; then reply with price and min size (or /alert <market> 32 1000)\n/unalert <market> — stop a price alert\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words, slug, or URL)\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000)\n/unalert <market> — stop a price alert\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.
