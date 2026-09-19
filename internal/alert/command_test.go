@@ -176,6 +176,26 @@ func TestParseCommand(t *testing.T) {
 	if ParseCommand("/orderbook").Cmd != CmdOB {
 		t.Fatal("orderbook alias")
 	}
+
+	got = ParseCommand("/alert Andersson")
+	if got.Cmd != CmdAlert || got.Market != "Andersson" || got.Price != 0 {
+		t.Fatalf("alert %+v", got)
+	}
+	got = ParseCommand("/alert@detectx_bot Magdalena Andersson 32 1000")
+	if got.Cmd != CmdAlert || got.Market != "Magdalena Andersson" || got.Price != 0.32 || got.MinSize != 1000 {
+		t.Fatalf("alert one shot %+v", got)
+	}
+	got = ParseCommand("/alert")
+	if got.Cmd != CmdAlert || got.Market != "" {
+		t.Fatalf("alert list %+v", got)
+	}
+	got = ParseCommand("/unalert Andersson")
+	if got.Cmd != CmdUnalert || got.Market != "Andersson" {
+		t.Fatalf("unalert %+v", got)
+	}
+	if ParseCommand("/cancel").Cmd != CmdCancel {
+		t.Fatal("cancel")
+	}
 }
 
 func TestEffectiveMinUSD(t *testing.T) {

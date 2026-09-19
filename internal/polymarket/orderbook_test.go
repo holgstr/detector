@@ -107,6 +107,70 @@ func TestFetchOutcomeBooks(t *testing.T) {
 	}
 }
 
+func TestBidSizeAtOrBelow(t *testing.T) {
+	levels := []BookLevel{
+		{Price: 0.42, Size: 50},
+		{Price: 0.40, Size: 100},
+		{Price: 0.32, Size: 1000},
+		{Price: 0.31, Size: 10},
+	}
+	if got := BidSizeAtOrBelow(levels, 0.32); mathAbs(got-1010) > 1e-9 {
+		t.Fatalf("32c or lower: %v", got)
+	}
+	if got := BidSizeAtOrBelow(levels, 0.40); mathAbs(got-1110) > 1e-9 {
+		t.Fatalf("40c or lower: %v", got)
+	}
+	if got := BidSizeAtOrBelow(levels, 0.20); got != 0 {
+		t.Fatalf("too high: %v", got)
+	}
+}
+
+func TestFetchYesBookUsesFullDepth(t *testing.T) {
+	gamma := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]gammaMarket{{
+			ConditionID:  "0xabc",
+			Slug:         "aliens",
+			Question:     "Aliens?",
+			Outcomes:     `["Yes","No"]`,
+			ClobTokenIDs: `["tok-yes","tok-no"]`,
+			Active:       true,
+		}})
+	}))
+	defer gamma.Close()
+
+	clob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("token_id") != "tok-yes" {
+			t.Fatalf("unexpected token %s", r.URL.Query().Get("token_id"))
+		}
+		book := clobBookResponse{
+			TickSize: flexNumber{V: 0.01},
+			Bids: []clobLevel{
+				{Price: flexNumber{V: 0.42}, Size: flexNumber{V: 50}},
+				{Price: flexNumber{V: 0.40}, Size: flexNumber{V: 100}},
+				{Price: flexNumber{V: 0.39}, Size: flexNumber{V: 10}},
+				{Price: flexNumber{V: 0.38}, Size: flexNumber{V: 5}},
+				{Price: flexNumber{V: 0.32}, Size: flexNumber{V: 1000}},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(book)
+	}))
+	defer clob.Close()
+
+	c := NewClient()
+	c.GammaBase = gamma.URL
+	c.ClobBase = clob.URL
+	got, err := c.FetchYesBook(context.Background(), "0xabc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Outcome != "Yes" || len(got.Bids) != 5 {
+		t.Fatalf("%+v", got)
+	}
+	if mathAbs(BidSizeAtOrBelow(got.Bids, 0.32)-1000) > 1e-9 {
+		t.Fatalf("size=%v bids=%+v", BidSizeAtOrBelow(got.Bids, 0.32), got.Bids)
+	}
+}
+
 func TestFlexNumberUnmarshal(t *testing.T) {
 	var b clobBookResponse
 	if err := json.Unmarshal([]byte(`{"tick_size":"0.001","bids":[{"price":"0.041","size":"480.45"}]}`), &b); err != nil {

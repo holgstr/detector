@@ -121,17 +121,7 @@ func (c *Client) FetchOutcomeBooks(ctx context.Context, conditionID string) ([]O
 				errCh <- fmt.Errorf("%s: %w", outcome, err)
 				return
 			}
-			tick := book.TickSize.V
-			if tick <= 0 {
-				tick = 0.01
-			}
-			out[i] = OutcomeBook{
-				Outcome: outcome,
-				TokenID: tok,
-				Tick:    tick,
-				Bids:    ClosestTicks(levelsFromClob(book.Bids), tick, OrderBookDepth, true),
-				Asks:    ClosestTicks(levelsFromClob(book.Asks), tick, OrderBookDepth, false),
-			}
+			out[i] = outcomeBookFromClob(outcome, tok, book, OrderBookDepth)
 		}()
 	}
 	wg.Wait()
@@ -146,6 +136,72 @@ func (c *Client) FetchOutcomeBooks(ctx context.Context, conditionID string) ([]O
 		return out, first
 	}
 	return out, nil
+}
+
+// FetchYesBook loads the full CLOB for the Yes token (or the first outcome).
+func (c *Client) FetchYesBook(ctx context.Context, conditionID string) (OutcomeBook, error) {
+	conditionID = strings.TrimSpace(conditionID)
+	if conditionID == "" {
+		return OutcomeBook{}, fmt.Errorf("empty condition id")
+	}
+	g, err := c.fetchGammaByCondition(ctx, conditionID)
+	if err != nil {
+		return OutcomeBook{}, err
+	}
+	m := toMarket(g)
+	if len(m.TokenIDs) == 0 {
+		return OutcomeBook{}, fmt.Errorf("no CLOB tokens for %s", conditionID)
+	}
+	idx := 0
+	for i, name := range m.Outcomes {
+		if strings.EqualFold(strings.TrimSpace(name), "yes") {
+			idx = i
+			break
+		}
+	}
+	if idx >= len(m.TokenIDs) {
+		idx = 0
+	}
+	outcome := "Yes"
+	if idx < len(m.Outcomes) && strings.TrimSpace(m.Outcomes[idx]) != "" {
+		outcome = m.Outcomes[idx]
+	}
+	book, err := c.fetchOrderBook(ctx, m.TokenIDs[idx])
+	if err != nil {
+		return OutcomeBook{}, err
+	}
+	return outcomeBookFromClob(outcome, m.TokenIDs[idx], book, 0), nil
+}
+
+func outcomeBookFromClob(outcome, tokenID string, book clobBookResponse, depth int) OutcomeBook {
+	tick := book.TickSize.V
+	if tick <= 0 {
+		tick = 0.01
+	}
+	bids := levelsFromClob(book.Bids)
+	asks := levelsFromClob(book.Asks)
+	if depth > 0 {
+		bids = ClosestTicks(bids, tick, depth, true)
+		asks = ClosestTicks(asks, tick, depth, false)
+	}
+	return OutcomeBook{
+		Outcome: outcome,
+		TokenID: tokenID,
+		Tick:    tick,
+		Bids:    bids,
+		Asks:    asks,
+	}
+}
+
+// BidSizeAtOrBelow is total bid size at maxPrice and every cheaper tick.
+func BidSizeAtOrBelow(levels []BookLevel, maxPrice float64) float64 {
+	var n float64
+	for _, lv := range levels {
+		if lv.Size > 0 && lv.Price <= maxPrice+1e-12 {
+			n += lv.Size
+		}
+	}
+	return n
 }
 
 func levelsFromClob(in []clobLevel) []BookLevel {
