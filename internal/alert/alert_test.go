@@ -295,6 +295,18 @@ func TestFormat(t *testing.T) {
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
+	got = Format(Alert{
+		Name:    "SnowLover7",
+		Side:    "BUY",
+		Outcome: "Yes",
+		Size:    1000,
+		Price:   0.984,
+		Title:   "Will it happen?",
+	})
+	want = "SnowLover7 BUY YES 1k @ 98.4c\nWill it happen?"
+	if got != want {
+		t.Fatalf("high price got:\n%s\nwant:\n%s", got, want)
+	}
 }
 
 func TestFormatIncludesNetPosition(t *testing.T) {
@@ -362,6 +374,24 @@ func TestAttachNetPositions(t *testing.T) {
 	}
 	if alerts[3].HasPosition {
 		t.Fatal("empty wallet should skip")
+	}
+}
+
+func TestFormatCents(t *testing.T) {
+	cases := []struct {
+		p    float64
+		want string
+	}{
+		{0.32, "32c"},
+		{0.97, "97c"},
+		{0.971, "97.1c"},
+		{0.984, "98.4c"},
+		{1, "100.0c"},
+	}
+	for _, tc := range cases {
+		if got := formatCents(tc.p); got != tc.want {
+			t.Errorf("formatCents(%v)=%q want %q", tc.p, got, tc.want)
+		}
 	}
 }
 
