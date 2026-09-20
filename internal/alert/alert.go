@@ -499,5 +499,9 @@ func formatUSD(n float64) string {
 }
 
 func formatCents(p float64) string {
-	return fmt.Sprintf("%.0fc", p*100)
+	cents := p * 100
+	if cents > 97 {
+		return fmt.Sprintf("%.1fc", cents)
+	}
+	return fmt.Sprintf("%.0fc", cents)
 }
