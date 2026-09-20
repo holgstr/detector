@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/sharps"
 )
 
 // PriceAlertRepeat is the cooldown between pings while the book still qualifies.
@@ -38,7 +39,6 @@ type PriceAlert struct {
 }
 
 type yesBookAPI interface {
-	FindMarket(ctx context.Context, query string) (polymarket.SearchMarket, error)
 	FetchYesBook(ctx context.Context, conditionID string) (polymarket.OutcomeBook, error)
 }
 
@@ -167,7 +167,7 @@ func parseShareSize(s string) (float64, bool) {
 	return v * mult, true
 }
 
-// DraftFromMarket builds a pending /alert after FindMarket.
+// DraftFromMarket builds a pending /alert after market resolution.
 func DraftFromMarket(query string, hit polymarket.SearchMarket) PriceAlertDraft {
 	title := strings.TrimSpace(hit.Market.Question)
 	if title == "" {
@@ -346,12 +346,15 @@ func CheckPriceAlerts(ctx context.Context, api yesBookAPI, alerts []PriceAlert, 
 }
 
 // ResolvePriceAlertMarket looks up an active market for /alert.
-func ResolvePriceAlertMarket(ctx context.Context, api yesBookAPI, query string) (PriceAlertDraft, string) {
+func ResolvePriceAlertMarket(ctx context.Context, api interface {
+	posMarketAPI
+	positionLookup
+}, query string, wallets []sharps.Wallet) (PriceAlertDraft, string) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return PriceAlertDraft{}, "Usage: /alert <market> — then reply with ask price and min size."
 	}
-	hit, err := api.FindMarket(ctx, query)
+	hit, err := resolvePosMarket(ctx, api, query, wallets)
 	if err != nil {
 		low := strings.ToLower(err.Error())
 		if strings.Contains(low, "resolved") {

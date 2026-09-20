@@ -125,6 +125,29 @@ func TestPickBestMarketEventTitleAndAnyTopic(t *testing.T) {
 	}
 }
 
+func TestPickBestMarketLiquidityBreaksVolumeTie(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market:     Market{ConditionID: "thin", Question: "Will Alice win?"},
+			Volume24hr: 100,
+			Volume:     100,
+			Liquidity:  10,
+			Active:     true,
+		},
+		{
+			Market:     Market{ConditionID: "deep", Question: "Will Alice be president?"},
+			Volume24hr: 100,
+			Volume:     100,
+			Liquidity:  50000,
+			Active:     true,
+		},
+	}
+	got, ok := PickBestMarket("Alice", hits)
+	if !ok || got.Market.ConditionID != "deep" {
+		t.Fatalf("liquidity: %+v ok=%v", got, ok)
+	}
+}
+
 func TestSearchMarketsQuery(t *testing.T) {
 	var path string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +194,7 @@ func TestSearchMarketsQuery(t *testing.T) {
 							"groupItemTitle": "Magdalena Andersson",
 							"volumeNum":      743723.0,
 							"volume24hr":     149789.0,
+							"liquidityNum":   12000.0,
 							"active":         true,
 							"closed":         false,
 						},
@@ -202,6 +226,9 @@ func TestSearchMarketsQuery(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0].Market.ConditionID != "0xabc" {
 		t.Fatalf("%+v", hits)
+	}
+	if hits[0].Liquidity != 12000 {
+		t.Fatalf("liquidity=%v", hits[0].Liquidity)
 	}
 	best, err := c.FindMarket(context.Background(), "Andersson")
 	if err != nil || best.Market.Question == "" {

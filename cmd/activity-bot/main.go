@@ -14,7 +14,8 @@
 // /port <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price).
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
-// /ob <market> prints the 4 closest Yes CLOB ticks on each side with size.
+// /ob <market> prints the 4 closest Yes CLOB ticks on each side with size
+// (keyword queries pick large tracked exposure, else the most traded live market).
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // /unalert <market> stops a watch. /cancel aborts the confirm step.
@@ -661,7 +662,7 @@ func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, c
 		}
 		return
 	}
-	rep, err := alert.FetchOBReport(ctx, api, query)
+	rep, err := alert.FetchOBReport(ctx, api, query, sharps.List())
 	if err != nil && len(rep.Books) == 0 {
 		msg := fmt.Sprintf("No active market matching %q.", query)
 		low := strings.ToLower(err.Error())
@@ -741,7 +742,7 @@ func replyAlert(ctx context.Context, tg *telegram.Client, api *polymarket.Client
 		return
 	}
 
-	draft, errMsg := alert.ResolvePriceAlertMarket(ctx, api, query)
+	draft, errMsg := alert.ResolvePriceAlertMarket(ctx, api, query, sharps.List())
 	if errMsg != "" {
 		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
 			log.Printf("reply: %v", err)

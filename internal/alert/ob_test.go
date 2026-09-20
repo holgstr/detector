@@ -6,16 +6,12 @@ import (
 	"testing"
 
 	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/sharps"
 )
 
 type fakeOBAPI struct {
-	hit   polymarket.SearchMarket
+	fakePosAPI
 	books []polymarket.OutcomeBook
-	err   error
-}
-
-func (f fakeOBAPI) FindMarket(context.Context, string) (polymarket.SearchMarket, error) {
-	return f.hit, f.err
 }
 
 func (f fakeOBAPI) FetchOutcomeBooks(context.Context, string) ([]polymarket.OutcomeBook, error) {
@@ -74,16 +70,61 @@ func TestFormatOBReportNonBinaryKeepsNames(t *testing.T) {
 
 func TestFetchOBReport(t *testing.T) {
 	api := fakeOBAPI{
-		hit: polymarket.SearchMarket{Market: polymarket.Market{Question: "Aliens?", ConditionID: "0xabc", Slug: "aliens"}},
+		fakePosAPI: fakePosAPI{
+			market: polymarket.SearchMarket{Market: polymarket.Market{Question: "Aliens?", ConditionID: "0xabc", Slug: "aliens"}, Active: true},
+		},
 		books: []polymarket.OutcomeBook{
 			{Outcome: "Yes", Tick: 0.01, Bids: []polymarket.BookLevel{{Price: 0.4, Size: 1}}},
 		},
 	}
-	rep, err := FetchOBReport(context.Background(), api, "aliens")
+	rep, err := FetchOBReport(context.Background(), api, "aliens", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rep.Title != "Aliens?" || len(rep.Books) != 1 {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestFetchOBReportPrefersTrackedExposure(t *testing.T) {
+	highVol := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xhighvol", Question: "Will Flavio win Serie A?"}, Volume24hr: 500000, Active: true}
+	held := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xheld", Question: "Will Flavio be next PM of Italy?"}, Volume24hr: 1000, Active: true}
+	api := fakeOBAPI{
+		fakePosAPI: fakePosAPI{
+			candidates: []polymarket.SearchMarket{highVol, held},
+			allPositions: map[string][]polymarket.Position{
+				"0xaaa": {{ConditionID: "0xheld", Outcome: "Yes", Size: 400}},
+			},
+		},
+		books: []polymarket.OutcomeBook{
+			{Outcome: "Yes", Tick: 0.01, Bids: []polymarket.BookLevel{{Price: 0.4, Size: 1}}},
+		},
+	}
+	rep, err := FetchOBReport(context.Background(), api, "Flavio", []sharps.Wallet{{Address: "0xaaa", Name: "Alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Title != "Will Flavio be next PM of Italy?" {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestFetchOBReportFallsBackToVolume(t *testing.T) {
+	highVol := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xhighvol", Question: "Will Flavio win Serie A?"}, Volume24hr: 500000, Volume: 2e6, Active: true}
+	thin := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xthin", Question: "Will Flavio win a local race?"}, Volume24hr: 10, Volume: 20, Active: true}
+	api := fakeOBAPI{
+		fakePosAPI: fakePosAPI{
+			candidates: []polymarket.SearchMarket{thin, highVol},
+		},
+		books: []polymarket.OutcomeBook{
+			{Outcome: "Yes", Tick: 0.01, Bids: []polymarket.BookLevel{{Price: 0.4, Size: 1}}},
+		},
+	}
+	rep, err := FetchOBReport(context.Background(), api, "Flavio", []sharps.Wallet{{Address: "0xaaa", Name: "Alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Title != "Will Flavio win Serie A?" {
 		t.Fatalf("%+v", rep)
 	}
 }
