@@ -12,7 +12,10 @@ import (
 	"github.com/holgstr/detector/internal/sharps"
 )
 
-const posShareEps = 0.5
+const (
+	posShareEps     = 0.5
+	posFetchWorkers = 16
+)
 
 type marketFinder interface {
 	FindMarket(ctx context.Context, query string) (polymarket.SearchMarket, error)
@@ -169,13 +172,42 @@ func resolvePosMarket(ctx context.Context, api interface {
 }
 
 func pickMarketByTrackedPositions(ctx context.Context, api positionLookup, candidates []polymarket.SearchMarket, wallets []sharps.Wallet) (polymarket.SearchMarket, error) {
-	if len(wallets) == 0 {
-		return candidates[0], nil
+	byWallet, _ := fetchTrackedPositions(ctx, api, wallets, candidateConditionIDs(candidates))
+	return pickMarketFromPositions(candidates, wallets, byWallet), nil
+}
+
+func candidateConditionIDs(candidates []polymarket.SearchMarket) []string {
+	ids := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		id := strings.TrimSpace(c.Market.ConditionID)
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func pickMarketFromPositions(candidates []polymarket.SearchMarket, wallets []sharps.Wallet, byWallet map[string][]polymarket.Position) polymarket.SearchMarket {
+	if len(candidates) == 0 {
+		return polymarket.SearchMarket{}
+	}
+	if len(wallets) == 0 || len(byWallet) == 0 {
+		return candidates[0]
 	}
 
 	cidIndex := make(map[string]int, len(candidates))
 	for i, c := range candidates {
 		cid := strings.ToLower(strings.TrimSpace(c.Market.ConditionID))
+		if cid == "" {
+			continue
+		}
 		cidIndex[cid] = i
 	}
 
@@ -184,45 +216,10 @@ func pickMarketByTrackedPositions(ctx context.Context, api positionLookup, candi
 		size    float64
 	}
 	scores := make([]marketScore, len(candidates))
-
-	type res struct {
-		pos []polymarket.Position
-	}
-	results := make(chan res, len(wallets))
-	var wg sync.WaitGroup
-	workers := 4
-	if workers > len(wallets) {
-		workers = len(wallets)
-	}
-	jobs := make(chan sharps.Wallet)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for w := range jobs {
-				pos, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{User: w.Address})
-				if err != nil {
-					results <- res{}
-					continue
-				}
-				results <- res{pos: pos}
-			}
-		}()
-	}
-	go func() {
-		defer close(jobs)
-		for _, w := range wallets {
-			jobs <- w
-		}
-	}()
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for r := range results {
+	for _, w := range wallets {
+		addr := strings.ToLower(w.Address)
 		byMarket := make(map[string][]polymarket.Position)
-		for _, p := range r.pos {
+		for _, p := range byWallet[addr] {
 			cid := strings.ToLower(strings.TrimSpace(p.ConditionID))
 			byMarket[cid] = append(byMarket[cid], p)
 		}
@@ -247,70 +244,157 @@ func pickMarketByTrackedPositions(ctx context.Context, api positionLookup, candi
 			bestIdx = i
 		}
 	}
-	return candidates[bestIdx], nil
+	return candidates[bestIdx]
 }
 
-// FetchPosReport finds the market and loads tracked wallets' open positions.
+func filterPositionsByMarket(byWallet map[string][]polymarket.Position, conditionID string) map[string][]polymarket.Position {
+	cid := strings.ToLower(strings.TrimSpace(conditionID))
+	if cid == "" {
+		return byWallet
+	}
+	out := make(map[string][]polymarket.Position, len(byWallet))
+	for addr, pos := range byWallet {
+		var keep []polymarket.Position
+		for _, p := range pos {
+			if strings.ToLower(strings.TrimSpace(p.ConditionID)) == cid {
+				keep = append(keep, p)
+			}
+		}
+		if len(keep) > 0 {
+			out[addr] = keep
+		}
+	}
+	return out
+}
+
+func posWorkerCount(n int) int {
+	if n <= 1 {
+		return n
+	}
+	w := posFetchWorkers
+	if w > n {
+		return n
+	}
+	return w
+}
+
+// fetchTrackedPositions loads open positions for every tracked wallet in one
+// parallel round (up to posFetchWorkers in flight). markets are condition IDs;
+// several IDs are sent as a CSV so one request covers disambiguation candidates.
+func fetchTrackedPositions(ctx context.Context, api positionLookup, wallets []sharps.Wallet, markets []string) (map[string][]polymarket.Position, int) {
+	byWallet := make(map[string][]polymarket.Position, len(wallets))
+	if len(wallets) == 0 {
+		return byWallet, 0
+	}
+	market := strings.Join(markets, ",")
+	limit := 0
+	if n := len(markets); n > 1 {
+		limit = 2 * n
+		if limit < 50 {
+			limit = 50
+		}
+		if limit > 500 {
+			limit = 500
+		}
+	}
+
+	type res struct {
+		addr string
+		pos  []polymarket.Position
+		err  error
+	}
+	results := make(chan res, len(wallets))
+	jobs := make(chan sharps.Wallet)
+	var wg sync.WaitGroup
+	workers := posWorkerCount(len(wallets))
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for w := range jobs {
+				pos, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{
+					User:   w.Address,
+					Market: market,
+					Limit:  limit,
+				})
+				results <- res{addr: strings.ToLower(w.Address), pos: pos, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, w := range wallets {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- w:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	failed := 0
+	for r := range results {
+		if r.err != nil {
+			failed++
+			continue
+		}
+		byWallet[r.addr] = r.pos
+	}
+	return byWallet, failed
+}
+
+// FetchPosReport finds the market and loads tracked wallets' open positions
+// in a single parallel round. Ambiguous names reuse that round both to pick
+// the market and to fill holdings, so wallets are not fetched twice.
 func FetchPosReport(ctx context.Context, api interface {
 	posMarketAPI
 	positionLookup
 }, query string, wallets []sharps.Wallet) (PosReport, error) {
-	hit, err := resolvePosMarket(ctx, api, query, wallets)
+	hit, byWallet, failed, err := loadPosMarketAndPositions(ctx, api, query, wallets)
 	if err != nil {
 		return PosReport{Query: query}, err
-	}
-
-	byWallet := make(map[string][]polymarket.Position, len(wallets))
-	failed := 0
-	if len(wallets) > 0 {
-		type res struct {
-			addr string
-			pos  []polymarket.Position
-			err  error
-		}
-		results := make(chan res, len(wallets))
-		var wg sync.WaitGroup
-		workers := 4
-		if workers > len(wallets) {
-			workers = len(wallets)
-		}
-		jobs := make(chan sharps.Wallet)
-		for i := 0; i < workers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for w := range jobs {
-					pos, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{
-						User:   w.Address,
-						Market: hit.Market.ConditionID,
-					})
-					results <- res{addr: strings.ToLower(w.Address), pos: pos, err: err}
-				}
-			}()
-		}
-		go func() {
-			defer close(jobs)
-			for _, w := range wallets {
-				jobs <- w
-			}
-		}()
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-		for r := range results {
-			if r.err != nil {
-				failed++
-				continue
-			}
-			byWallet[r.addr] = r.pos
-		}
 	}
 	rep := BuildPosReport(query, hit, wallets, byWallet, failed)
 	if failed == len(wallets) && len(wallets) > 0 {
 		return rep, fmt.Errorf("couldn't load positions")
 	}
 	return rep, nil
+}
+
+func loadPosMarketAndPositions(ctx context.Context, api interface {
+	posMarketAPI
+	positionLookup
+}, query string, wallets []sharps.Wallet) (polymarket.SearchMarket, map[string][]polymarket.Position, int, error) {
+	if polymarket.IsExplicitMarketRef(query) {
+		hit, err := api.FindMarket(ctx, query)
+		if err != nil {
+			return polymarket.SearchMarket{}, nil, 0, err
+		}
+		byWallet, failed := fetchTrackedPositions(ctx, api, wallets, []string{hit.Market.ConditionID})
+		return hit, byWallet, failed, nil
+	}
+
+	hits, err := api.SearchMarkets(ctx, query)
+	if err != nil {
+		return polymarket.SearchMarket{}, nil, 0, err
+	}
+	candidates := polymarket.TopRankMatches(query, hits)
+	if len(candidates) == 0 {
+		return polymarket.SearchMarket{}, nil, 0, fmt.Errorf("no active market matching %q", query)
+	}
+	if len(candidates) == 1 {
+		byWallet, failed := fetchTrackedPositions(ctx, api, wallets, []string{candidates[0].Market.ConditionID})
+		return candidates[0], byWallet, failed, nil
+	}
+
+	cids := candidateConditionIDs(candidates)
+	all, failed := fetchTrackedPositions(ctx, api, wallets, cids)
+	hit := pickMarketFromPositions(candidates, wallets, all)
+	return hit, filterPositionsByMarket(all, hit.Market.ConditionID), failed, nil
 }
 
 // FormatPosReport is one or more Telegram bodies (split under the 4096 cap).

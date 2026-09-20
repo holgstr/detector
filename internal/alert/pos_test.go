@@ -2,8 +2,11 @@ package alert
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/holgstr/detector/internal/polymarket"
 	"github.com/holgstr/detector/internal/sharps"
@@ -130,9 +133,9 @@ func TestFormatPosReport(t *testing.T) {
 }
 
 type fakePosAPI struct {
-	market      polymarket.SearchMarket
-	candidates  []polymarket.SearchMarket
-	pos         fakePositions
+	market       polymarket.SearchMarket
+	candidates   []polymarket.SearchMarket
+	pos          fakePositions
 	allPositions map[string][]polymarket.Position // wallet -> all positions (disambiguation)
 }
 
@@ -148,14 +151,53 @@ func (f fakePosAPI) SearchMarkets(_ context.Context, _ string) ([]polymarket.Sea
 }
 
 func (f fakePosAPI) FetchPositions(ctx context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
-	if f.allPositions != nil && strings.TrimSpace(opt.Market) == "" {
-		addr := strings.ToLower(opt.User)
-		if pos, ok := f.allPositions[addr]; ok {
-			return pos, nil
+	addr := strings.ToLower(opt.User)
+	markets := splitPosMarkets(opt.Market)
+	if len(markets) == 0 {
+		if f.allPositions != nil {
+			if pos, ok := f.allPositions[addr]; ok {
+				return pos, nil
+			}
+			return nil, nil
 		}
-		return nil, nil
+		return f.pos.FetchPositions(ctx, opt)
 	}
-	return f.pos.FetchPositions(ctx, opt)
+	want := make(map[string]struct{}, len(markets))
+	for _, id := range markets {
+		want[strings.ToLower(id)] = struct{}{}
+	}
+	if f.allPositions != nil {
+		var out []polymarket.Position
+		for _, p := range f.allPositions[addr] {
+			if _, ok := want[strings.ToLower(strings.TrimSpace(p.ConditionID))]; ok {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
+	if len(markets) == 1 {
+		return f.pos.FetchPositions(ctx, opt)
+	}
+	var out []polymarket.Position
+	for _, id := range markets {
+		pos, err := f.pos.FetchPositions(ctx, polymarket.FetchPositionsOptions{User: opt.User, Market: id})
+		if err != nil {
+			continue
+		}
+		out = append(out, pos...)
+	}
+	return out, nil
+}
+
+func splitPosMarkets(market string) []string {
+	var out []string
+	for _, part := range strings.Split(market, ",") {
+		id := strings.TrimSpace(part)
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func TestPickMarketByTrackedPositions(t *testing.T) {
@@ -175,6 +217,19 @@ func TestPickMarketByTrackedPositions(t *testing.T) {
 	})
 	if err != nil || got.Market.ConditionID != "0xheld" {
 		t.Fatalf("want held market, got %+v err=%v", got, err)
+	}
+}
+
+func TestFilterPositionsByMarket(t *testing.T) {
+	got := filterPositionsByMarket(map[string][]polymarket.Position{
+		"0xaaa": {
+			{ConditionID: "0xheld", Outcome: "Yes", Size: 10},
+			{ConditionID: "0xhighvol", Outcome: "No", Size: 3},
+		},
+		"0xbbb": {{ConditionID: "0xhighvol", Outcome: "Yes", Size: 1}},
+	}, "0xHELD")
+	if len(got) != 1 || len(got["0xaaa"]) != 1 || got["0xaaa"][0].Size != 10 {
+		t.Fatalf("%+v", got)
 	}
 }
 
@@ -219,5 +274,111 @@ func TestFetchPosReport(t *testing.T) {
 	}
 	if !r.HasCur || r.CurPrice != 0.50 {
 		t.Fatalf("market px %+v", r)
+	}
+}
+
+type countingPosAPI struct {
+	fakePosAPI
+	calls    atomic.Int32
+	inflight atomic.Int32
+	max      atomic.Int32
+	gate     <-chan struct{}
+}
+
+func (c *countingPosAPI) FetchPositions(ctx context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
+	c.calls.Add(1)
+	n := c.inflight.Add(1)
+	for {
+		old := c.max.Load()
+		if n <= old || c.max.CompareAndSwap(old, n) {
+			break
+		}
+	}
+	defer c.inflight.Add(-1)
+	if c.gate != nil {
+		select {
+		case <-c.gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return c.fakePosAPI.FetchPositions(ctx, opt)
+}
+
+func TestFetchPosReportOneRoundTripForAmbiguousMarket(t *testing.T) {
+	highVol := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xhighvol", Question: "Will Flavio win Serie A?"}, Volume24hr: 500000, Active: true}
+	held := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xheld", Question: "Will Flavio be next PM of Italy?"}, Volume24hr: 1000, Active: true}
+	wallets := []sharps.Wallet{
+		{Address: "0xaaa", Name: "Alice"},
+		{Address: "0xbbb", Name: "Bob"},
+		{Address: "0xccc", Name: "Cara"},
+	}
+	api := &countingPosAPI{fakePosAPI: fakePosAPI{
+		candidates: []polymarket.SearchMarket{highVol, held},
+		allPositions: map[string][]polymarket.Position{
+			"0xaaa": {{ConditionID: "0xheld", Outcome: "Yes", Size: 25}},
+			"0xbbb": {{ConditionID: "0xheld", Outcome: "No", Size: 10}},
+			"0xccc": {{ConditionID: "0xhighvol", Outcome: "Yes", Size: 1}},
+		},
+	}}
+	r, err := FetchPosReport(context.Background(), api, "Flavio", wallets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Title != "Will Flavio be next PM of Italy?" || len(r.Holdings) != 2 {
+		t.Fatalf("%+v", r)
+	}
+	if got := api.calls.Load(); got != int32(len(wallets)) {
+		t.Fatalf("position fetches=%d want %d (one round, not resolve+report)", got, len(wallets))
+	}
+}
+
+func TestFetchPosReportFetchesWalletsInParallel(t *testing.T) {
+	const n = 20
+	gate := make(chan struct{})
+	inner := fakePosAPI{
+		market:       polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xabc", Question: "Will Magdalena Andersson win?"}, Active: true},
+		allPositions: make(map[string][]polymarket.Position, n),
+	}
+	wallets := make([]sharps.Wallet, n)
+	for i := 0; i < n; i++ {
+		addr := fmt.Sprintf("0x%040x", i+1)
+		wallets[i] = sharps.Wallet{Address: addr, Name: fmt.Sprintf("W%d", i)}
+		inner.allPositions[addr] = []polymarket.Position{{ConditionID: "0xabc", Outcome: "Yes", Size: float64(i + 10)}}
+	}
+	api := &countingPosAPI{fakePosAPI: inner, gate: gate}
+
+	done := make(chan struct{})
+	var (
+		rep PosReport
+		err error
+	)
+	go func() {
+		rep, err = FetchPosReport(context.Background(), api, "Andersson", wallets)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for api.max.Load() < int32(posFetchWorkers) {
+		if time.Now().After(deadline) {
+			close(gate)
+			<-done
+			t.Fatalf("max inflight=%d want %d", api.max.Load(), posFetchWorkers)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(gate)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.calls.Load() != n {
+		t.Fatalf("calls=%d want %d", api.calls.Load(), n)
+	}
+	if api.max.Load() != int32(posFetchWorkers) {
+		t.Fatalf("max inflight=%d want %d", api.max.Load(), posFetchWorkers)
+	}
+	if len(rep.Holdings) != n {
+		t.Fatalf("holdings=%d", len(rep.Holdings))
 	}
 }
