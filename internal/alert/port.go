@@ -43,20 +43,13 @@ type PortReport struct {
 // PortUsage is the reply when /port has no trader (or "all").
 const PortUsage = "Usage: /port <trader> — open non-sports nets of $100+, shares sorted by market value."
 
-// ResolvePortWallet requires exactly one tracked trader.
-func ResolvePortWallet(query string) (sharps.Wallet, string) {
+// ResolvePortWallet requires exactly one trader (tracked or a Polymarket name/wallet).
+func ResolvePortWallet(ctx context.Context, api userLookup, query string) (sharps.Wallet, string) {
 	q := strings.TrimSpace(query)
 	if q == "" || strings.EqualFold(q, "all") {
 		return sharps.Wallet{}, PortUsage
 	}
-	hits, errMsg := ResolveNetWallets(q)
-	if errMsg != "" {
-		return sharps.Wallet{}, errMsg
-	}
-	if len(hits) != 1 {
-		return sharps.Wallet{}, PortUsage
-	}
-	return hits[0], ""
+	return ResolveAnyTrader(ctx, api, q)
 }
 
 // NetPortHoldings collapses Yes/No legs per market and drops flats/dust.

@@ -112,7 +112,7 @@ func TestParseCommand(t *testing.T) {
 		t.Fatalf("lasttrades mixed %+v", got)
 	}
 	got = ParseCommand("/lasttrades@detectx_bot Magdalena Andersson 12h")
-	if got.Cmd != CmdLastTrades || got.Window != 12*time.Hour || got.Trader != "" || got.Market != "Magdalena Andersson" {
+	if got.Cmd != CmdLastTrades || got.Window != 12*time.Hour || got.Trader != "Magdalena" || got.Market != "Andersson" {
 		t.Fatalf("lasttrades market only %+v", got)
 	}
 	got = ParseCommand("/lasttrades all Andersson")

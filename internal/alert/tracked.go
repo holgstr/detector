@@ -296,6 +296,44 @@ func ResolveUnaddWallet(ctx context.Context, api userLookup, query string) (shar
 	return w, ""
 }
 
+// ResolveAnyTrader maps a name or wallet id to one wallet.
+// Tracked names (including short unique prefixes) win; otherwise the
+// current Polymarket profile is used even if we are not watching them.
+func ResolveAnyTrader(ctx context.Context, api userLookup, query string) (sharps.Wallet, string) {
+	q := strings.TrimSpace(query)
+	if q == "" || strings.EqualFold(q, "all") {
+		return sharps.Wallet{}, "Usage: <trader> — a Polymarket name or wallet id."
+	}
+	hits := sharps.Lookup(q)
+	if len(hits) == 1 {
+		return hits[0], ""
+	}
+	if len(hits) > 1 {
+		return sharps.Wallet{}, fmt.Sprintf("Several traders match %q: %s", q, joinWalletNames(hits))
+	}
+	if addr, ok := polymarket.ParseWalletAddress(q); ok {
+		if api == nil {
+			return sharps.Wallet{Address: addr, Name: shortWallet(addr)}, ""
+		}
+		p, err := api.FetchProfile(ctx, addr)
+		if err != nil {
+			return sharps.Wallet{Address: addr, Name: shortWallet(addr)}, ""
+		}
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			name = shortWallet(addr)
+		}
+		if p.Address != "" {
+			addr = p.Address
+		}
+		return sharps.Wallet{Address: addr, Name: name}, ""
+	}
+	if api == nil {
+		return sharps.Wallet{}, fmt.Sprintf("No Polymarket user matching %q.", q)
+	}
+	return resolveNameToWallet(ctx, api, q)
+}
+
 func resolveNameToWallet(ctx context.Context, api userLookup, query string) (sharps.Wallet, string) {
 	hits, err := api.SearchUsers(ctx, query)
 	if err != nil {

@@ -119,7 +119,59 @@ func TestSplitTraderMarket(t *testing.T) {
 		t.Fatalf("%q %q", trader, market)
 	}
 	trader, market = splitTraderMarket([]string{"Magdalena", "Andersson"})
-	if trader != "" || market != "Magdalena Andersson" {
+	if trader != "Magdalena" || market != "Andersson" {
 		t.Fatalf("%q %q", trader, market)
+	}
+}
+
+func TestResolveLastTradesWallets(t *testing.T) {
+	api := fakeUsers{
+		byName: map[string][]polymarket.UserProfile{
+			"newsharp": {{Address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Name: "NewSharp"}},
+			"john": {
+				{Address: "0x1111111111111111111111111111111111111111", Name: "JohnA"},
+				{Address: "0x2222222222222222222222222222222222222222", Name: "JohnB"},
+			},
+		},
+	}
+	wallets, market, label, errMsg := ResolveLastTradesWallets(context.Background(), api, "", "")
+	if errMsg != "" || len(wallets) != len(sharps.Tracked) || market != "" || label != "" {
+		t.Fatalf("all %+v %q %q %q", wallets, market, label, errMsg)
+	}
+
+	wallets, market, label, errMsg = ResolveLastTradesWallets(context.Background(), api, "Flip", "Andersson")
+	if errMsg != "" || len(wallets) != 1 || wallets[0].Name != "Flipadelphia" || market != "Andersson" || label != "Flipadelphia" {
+		t.Fatalf("tracked %+v %q %q %q", wallets, market, label, errMsg)
+	}
+
+	wallets, market, label, errMsg = ResolveLastTradesWallets(context.Background(), api, "NewSharp", "")
+	if errMsg != "" || len(wallets) != 1 || wallets[0].Name != "NewSharp" || market != "" || label != "NewSharp" {
+		t.Fatalf("untracked %+v %q %q %q", wallets, market, label, errMsg)
+	}
+
+	wallets, market, label, errMsg = ResolveLastTradesWallets(context.Background(), api, "NewSharp", "Andersson")
+	if errMsg != "" || len(wallets) != 1 || wallets[0].Name != "NewSharp" || market != "Andersson" {
+		t.Fatalf("untracked market %+v %q %q", wallets, market, errMsg)
+	}
+
+	wallets, market, label, errMsg = ResolveLastTradesWallets(context.Background(), api, "Magdalena", "Andersson")
+	if errMsg != "" || len(wallets) != len(sharps.Tracked) || market != "Magdalena Andersson" || label != "" {
+		t.Fatalf("market fallback %+v %q %q %q", wallets, market, label, errMsg)
+	}
+
+	wallets, market, label, errMsg = ResolveLastTradesWallets(context.Background(), api, "nope", "")
+	if errMsg != "" || len(wallets) != len(sharps.Tracked) || market != "nope" {
+		t.Fatalf("unknown as market %+v %q %q", wallets, market, errMsg)
+	}
+
+	if _, _, _, errMsg := ResolveLastTradesWallets(context.Background(), api, "w", ""); errMsg == "" || !strings.Contains(errMsg, "Several") {
+		t.Fatalf("ambiguous tracked: %q", errMsg)
+	}
+	if _, _, _, errMsg := ResolveLastTradesWallets(context.Background(), api, "john", ""); errMsg == "" || !strings.Contains(errMsg, "Several") {
+		t.Fatalf("ambiguous users: %q", errMsg)
+	}
+	wallets, market, _, errMsg = ResolveLastTradesWallets(context.Background(), api, "john", "election")
+	if errMsg != "" || len(wallets) != len(sharps.Tracked) || market != "john election" {
+		t.Fatalf("ambiguous first token as market %+v %q %q", wallets, market, errMsg)
 	}
 }

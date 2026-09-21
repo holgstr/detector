@@ -11,8 +11,8 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
-// /port <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price).
-// /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; omit trader = all tracked).
+// /port <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name).
+// /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size
 // (keyword queries pick large tracked exposure, else the most traded live market).
@@ -601,7 +601,7 @@ func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 }
 
 func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
-	w, errMsg := alert.ResolvePortWallet(cmd.Trader)
+	w, errMsg := alert.ResolvePortWallet(ctx, api, cmd.Trader)
 	if errMsg != "" {
 		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
 			log.Printf("reply: %v", err)
@@ -628,18 +628,14 @@ func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client,
 }
 
 func replyLastTrades(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
-	wallets, errMsg := alert.ResolveNetWallets(cmd.Trader)
+	wallets, market, label, errMsg := alert.ResolveLastTradesWallets(ctx, api, cmd.Trader, cmd.Market)
 	if errMsg != "" {
 		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
 			log.Printf("reply: %v", err)
 		}
 		return
 	}
-	label := strings.TrimSpace(cmd.Trader)
-	if len(wallets) == 1 {
-		label = wallets[0].Name
-	}
-	rep, err := alert.FetchLastTradesReport(ctx, api, wallets, cmd.Window, cmd.Market, label)
+	rep, err := alert.FetchLastTradesReport(ctx, api, wallets, cmd.Window, market, label)
 	chunks := alert.FormatLastTradesReport(rep)
 	if err != nil && len(rep.Trades) == 0 {
 		chunks = []string{fmt.Sprintf("Couldn't load activity: %v", err)}

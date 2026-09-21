@@ -13,6 +13,39 @@ import (
 
 const maxLastTrades = 80
 
+// ResolveLastTradesWallets picks wallets for /lasttrades [trader] [market].
+// A unique tracked or Polymarket name is that trader. If the first token is
+// not a person, it is treated as the start of the market filter instead.
+func ResolveLastTradesWallets(ctx context.Context, api userLookup, trader, market string) (wallets []sharps.Wallet, marketQuery, label, errMsg string) {
+	trader = strings.TrimSpace(trader)
+	market = strings.TrimSpace(market)
+	if trader == "" {
+		return sharps.Lookup(""), market, "", ""
+	}
+	w, errMsg := ResolveAnyTrader(ctx, api, trader)
+	if errMsg == "" {
+		name := strings.TrimSpace(w.Name)
+		if name == "" {
+			name = trader
+		}
+		return []sharps.Wallet{w}, market, name, ""
+	}
+	if strings.HasPrefix(errMsg, "Couldn't look up") {
+		return nil, "", "", errMsg
+	}
+	if len(sharps.Lookup(trader)) > 1 {
+		return nil, "", "", errMsg
+	}
+	if market == "" && strings.HasPrefix(errMsg, "Several") {
+		return nil, "", "", errMsg
+	}
+	combined := trader
+	if market != "" {
+		combined += " " + market
+	}
+	return sharps.Lookup(""), combined, "", ""
+}
+
 // LastTrade is one fill in a /lasttrades report.
 type LastTrade struct {
 	Name      string
