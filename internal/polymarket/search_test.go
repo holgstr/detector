@@ -148,58 +148,29 @@ func TestPickBestMarketLiquidityBreaksVolumeTie(t *testing.T) {
 	}
 }
 
-func TestPickBestMarketFlavioPrefersPresidentialWinner(t *testing.T) {
+func TestPickBestMarketFlavioFoldsAccent(t *testing.T) {
 	hits := []SearchMarket{
-		{
-			Market:         Market{ConditionID: "share", Question: "Will Flávio Bolsonaro win 39% or more of the valid vote in the first round of the 2026 Brazilian presidential election?", Slug: "brazil-first-round-vote-share-flavio-bolsonaro-39-plus"},
-			GroupItemTitle: "39%+",
-			EventTitle:     "Brazil Presidential Election First Round: Flávio Bolsonaro Vote Share?",
-			Volume24hr:     1450,
-			Volume:         24907,
-			Active:         true,
-		},
 		{
 			Market:         Market{ConditionID: "votes", Question: "Will Flavio Bolsonaro win the most votes in the first round of the 2026 Brazil presidential election?", Slug: "will-flavio-bolsonaro-win-the-most-votes-in-the-first-round"},
 			GroupItemTitle: "Flavio Bolsonaro",
-			EventTitle:     "Brazil Presidential Election First Round Winner",
 			Volume24hr:     8240,
 			Volume:         61293,
-			Liquidity:      53812,
 			Active:         true,
 		},
 		{
-			Market:         Market{ConditionID: "second", Question: "Will Flávio Bolsonaro finish in second place in the first round of the 2026 Brazilian presidential election?", Slug: "will-flvio-bolsonaro-finish-in-second-place"},
+			Market:         Market{ConditionID: "win", Question: "Will Flávio Bolsonaro win the 2026 Brazilian presidential election?", Slug: "will-flvio-bolsonaro-win-the-2026-brazilian-presidential-election"},
 			GroupItemTitle: "Flávio Bolsonaro",
-			EventTitle:     "Brazil Presidential Election First Round: 2nd Place",
-			Volume24hr:     45179,
-			Volume:         1e6,
-			Active:         true,
-		},
-		{
-			Market:         Market{ConditionID: "win", Question: "Will Flávio Bolsonaro win the 2026 Brazilian presidential election?", Slug: "will-flvio-bolsonaro-win-the-2026-brazilian-presidential-election", EventSlug: "brazil-presidential-election"},
-			GroupItemTitle: "Flávio Bolsonaro",
-			EventTitle:     "Brazil Presidential Election",
 			Volume24hr:     113184,
 			Volume:         11e6,
-			Liquidity:      342725,
 			Active:         true,
 		},
 	}
 	got, ok := PickBestMarket("Flavio", hits)
 	if !ok || got.Market.ConditionID != "win" {
-		t.Fatalf("name query should pick overall winner, got %+v ok=%v", got, ok)
+		t.Fatalf("accented title must match and win on volume: %+v ok=%v", got, ok)
 	}
-	got, ok = PickBestMarket("Flávio", hits)
-	if !ok || got.Market.ConditionID != "win" {
-		t.Fatalf("accented name: %+v ok=%v", got, ok)
-	}
-	got, ok = PickBestMarket("Flavio most votes", hits)
-	if !ok || got.Market.ConditionID != "votes" {
-		t.Fatalf("explicit side query: %+v ok=%v", got, ok)
-	}
-	top := TopRankMatches("Flavio", hits)
-	if len(top) != 1 || top[0].Market.ConditionID != "win" {
-		t.Fatalf("top should be only the winner market: %+v", top)
+	if _, ok := PickBestMarket("Flávio", hits); !ok {
+		t.Fatal("accented query should match")
 	}
 }
 

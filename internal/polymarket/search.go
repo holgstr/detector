@@ -185,8 +185,7 @@ func searchMarketFromGamma(g gammaMarket) SearchMarket {
 
 // PickBestMarket chooses an active, unresolved market for a word query.
 // Own titles/slugs outrank event titles (Andersson → Magdalena, not a sibling
-// in the same event). Name queries prefer the overall winner market (Flavio →
-// presidential election, not first-round most-votes). Then MarketInterest.
+// in the same event). Then MarketInterest (24h volume, lifetime volume, liquidity).
 func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 	top := TopRankMatches(query, hits)
 	if len(top) == 0 {
@@ -219,9 +218,7 @@ func preferMarket(a, b SearchMarket) bool {
 }
 
 // TopRankMatches returns live markets sharing the best text-match rank for
-// query. Unless the query itself names a side market (most votes, first round,
-// …), overall winner contracts are kept and side markets dropped. Sorted by
-// MarketInterest (same order as PickBestMarket).
+// query, sorted by MarketInterest (same order as PickBestMarket).
 func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
 	toks := searchTokens(query)
 	if len(toks) == 0 || len(hits) == 0 {
@@ -256,107 +253,10 @@ func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
 			top = append(top, m.hit)
 		}
 	}
-	top = preferPrimaryMarkets(top, toks)
 	sort.SliceStable(top, func(i, j int) bool {
 		return preferMarket(top[i], top[j])
 	})
 	return top
-}
-
-func preferPrimaryMarkets(hits []SearchMarket, toks []string) []SearchMarket {
-	if len(hits) <= 1 || queryWantsSideMarket(toks) {
-		return hits
-	}
-	var winners, rest []SearchMarket
-	for _, h := range hits {
-		if isSideMarket(h) {
-			continue
-		}
-		rest = append(rest, h)
-		if isOverallWinner(h) {
-			winners = append(winners, h)
-		}
-	}
-	if len(winners) > 0 {
-		return winners
-	}
-	if len(rest) > 0 {
-		return rest
-	}
-	return hits
-}
-
-func queryWantsSideMarket(toks []string) bool {
-	joined := " " + strings.Join(toks, " ") + " "
-	for _, w := range []string{
-		"votes", "round", "share", "runoff", "second", "third", "2nd", "3rd",
-		"debate", "arrest", "arrested", "charged", "qualify", "place",
-		"percent", "pct",
-	} {
-		if strings.Contains(joined, " "+w+" ") {
-			return true
-		}
-	}
-	return false
-}
-
-func isSideMarket(h SearchMarket) bool {
-	hay := marketText(h)
-	for _, p := range []string{
-		"most votes",
-		"first round",
-		"second place",
-		"third place",
-		"2nd place",
-		"3rd place",
-		"finish in",
-		"vote share",
-		"valid vote",
-		"runoff",
-		"qualify for",
-		"debate",
-		"charged",
-		"arrested",
-		"less than",
-		" or more of ",
-		"between ",
-	} {
-		if strings.Contains(hay, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func isOverallWinner(h SearchMarket) bool {
-	if isSideMarket(h) {
-		return false
-	}
-	hay := marketText(h)
-	switch {
-	case strings.Contains(hay, "next prime minister"),
-		strings.Contains(hay, "next president"),
-		strings.Contains(hay, "be the next"):
-		return true
-	case strings.Contains(hay, " win the ") &&
-		(strings.Contains(hay, "election") ||
-			strings.Contains(hay, "president") ||
-			strings.Contains(hay, "prime minister") ||
-			strings.Contains(hay, "championship")):
-		return true
-	default:
-		return false
-	}
-}
-
-func marketText(h SearchMarket) string {
-	return foldSearchText(strings.Join([]string{
-		h.GroupItemTitle,
-		h.Market.Question,
-		h.EventTitle,
-		strings.ReplaceAll(h.Market.Slug, "-", " "),
-		strings.ReplaceAll(h.Market.EventSlug, "-", " "),
-	}, " "))
 }
 
 // IsExplicitMarketRef reports whether query is a condition id, market URL, or slug.
