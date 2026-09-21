@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/sharps"
 )
 
 type fakeAlertAPI struct {
@@ -166,5 +167,20 @@ func TestDraftFromMarket(t *testing.T) {
 	})
 	if d.Title != "Aliens?" || d.ConditionID != "0xabc" {
 		t.Fatalf("%+v", d)
+	}
+}
+
+func TestResolvePriceAlertMarketPrefersTracked(t *testing.T) {
+	highVol := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xhighvol", Question: "Will Flavio win Serie A?", Slug: "serie"}, Volume24hr: 500000, Active: true}
+	held := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xheld", Question: "Will Flavio be next PM of Italy?", Slug: "pm"}, Volume24hr: 1000, Active: true}
+	api := fakePosAPI{
+		candidates: []polymarket.SearchMarket{highVol, held},
+		allPositions: map[string][]polymarket.Position{
+			"0xaaa": {{ConditionID: "0xheld", Outcome: "Yes", Size: 250}},
+		},
+	}
+	d, errMsg := ResolvePriceAlertMarket(context.Background(), api, "Flavio", []sharps.Wallet{{Address: "0xaaa", Name: "Alice"}})
+	if errMsg != "" || d.ConditionID != "0xheld" {
+		t.Fatalf("%+v %q", d, errMsg)
 	}
 }

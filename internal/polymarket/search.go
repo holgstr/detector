@@ -18,6 +18,7 @@ type SearchMarket struct {
 	EventTitle     string
 	Volume         float64
 	Volume24hr     float64
+	Liquidity      float64
 	Active         bool
 	Closed         bool
 }
@@ -44,6 +45,8 @@ type publicSearchMarket struct {
 	Volume24hr     float64 `json:"volume24hr"`
 	VolumeNum      float64 `json:"volumeNum"`
 	Volume         any     `json:"volume"`
+	LiquidityNum   float64 `json:"liquidityNum"`
+	Liquidity      any     `json:"liquidity"`
 	Active         bool    `json:"active"`
 	Closed         bool    `json:"closed"`
 	Archived       bool    `json:"archived"`
@@ -111,6 +114,7 @@ func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarke
 				EventTitle:     ev.Title,
 				Volume:         firstFloat(g.VolumeNum, g.Volume),
 				Volume24hr:     g.Volume24hr,
+				Liquidity:      firstFloat(g.LiquidityNum, g.Liquidity),
 				Active:         g.Active,
 				Closed:         g.Closed,
 			})
@@ -121,8 +125,8 @@ func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarke
 
 // FindMarket resolves a condition id, URL, slug, or free-text name.
 // Only active, unresolved markets are returned. Word queries use
-// public-search and pick the highest-volume live hit whose market
-// (or event) title contains the words.
+// public-search and pick the live hit whose market (or event) title
+// contains the words with the strongest volume / liquidity interest.
 func (c *Client) FindMarket(ctx context.Context, query string) (SearchMarket, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -181,7 +185,7 @@ func searchMarketFromGamma(g gammaMarket) SearchMarket {
 
 // PickBestMarket chooses an active, unresolved market for a word query.
 // Own titles/slugs outrank event titles (Andersson → Magdalena, not a sibling
-// in the same event). Then 24h volume, then total.
+// in the same event). Then MarketInterest (24h volume, lifetime volume, liquidity).
 func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 	toks := searchTokens(query)
 	if len(toks) == 0 || len(hits) == 0 {
@@ -210,19 +214,36 @@ func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
 		if matched[i].rank != matched[j].rank {
 			return matched[i].rank > matched[j].rank
 		}
-		if matched[i].hit.Volume24hr != matched[j].hit.Volume24hr {
-			return matched[i].hit.Volume24hr > matched[j].hit.Volume24hr
-		}
-		if matched[i].hit.Volume != matched[j].hit.Volume {
-			return matched[i].hit.Volume > matched[j].hit.Volume
-		}
-		return matched[i].hit.Market.Question < matched[j].hit.Market.Question
+		return preferMarket(matched[i].hit, matched[j].hit)
 	})
 	return matched[0].hit, true
 }
 
+// MarketInterest is how "real" a colliding live market is: recent volume,
+// then lifetime volume, then quoted liquidity (open-interest proxy).
+func MarketInterest(h SearchMarket) float64 {
+	return h.Volume24hr*2 + h.Volume + h.Liquidity
+}
+
+func preferMarket(a, b SearchMarket) bool {
+	ia, ib := MarketInterest(a), MarketInterest(b)
+	if ia != ib {
+		return ia > ib
+	}
+	if a.Volume24hr != b.Volume24hr {
+		return a.Volume24hr > b.Volume24hr
+	}
+	if a.Volume != b.Volume {
+		return a.Volume > b.Volume
+	}
+	if a.Liquidity != b.Liquidity {
+		return a.Liquidity > b.Liquidity
+	}
+	return a.Market.Question < b.Market.Question
+}
+
 // TopRankMatches returns live markets sharing the best text-match rank for
-// query, sorted by 24h volume then total volume (same order as PickBestMarket).
+// query, sorted by MarketInterest (same order as PickBestMarket).
 func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
 	toks := searchTokens(query)
 	if len(toks) == 0 || len(hits) == 0 {
@@ -258,13 +279,7 @@ func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
 		}
 	}
 	sort.SliceStable(top, func(i, j int) bool {
-		if top[i].Volume24hr != top[j].Volume24hr {
-			return top[i].Volume24hr > top[j].Volume24hr
-		}
-		if top[i].Volume != top[j].Volume {
-			return top[i].Volume > top[j].Volume
-		}
-		return top[i].Market.Question < top[j].Market.Question
+		return preferMarket(top[i], top[j])
 	})
 	return top
 }

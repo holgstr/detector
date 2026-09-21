@@ -6,10 +6,12 @@ import (
 	"strings"
 
 	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/sharps"
 )
 
 type obMarketAPI interface {
-	FindMarket(ctx context.Context, query string) (polymarket.SearchMarket, error)
+	posMarketAPI
+	positionLookup
 	FetchOutcomeBooks(ctx context.Context, conditionID string) ([]polymarket.OutcomeBook, error)
 }
 
@@ -22,10 +24,11 @@ type OBReport struct {
 	Books []polymarket.OutcomeBook
 }
 
-// FetchOBReport resolves a market and loads CLOB depth.
-func FetchOBReport(ctx context.Context, api obMarketAPI, query string) (OBReport, error) {
+// FetchOBReport resolves a market (tracked exposure, then volume/liquidity)
+// and loads CLOB depth.
+func FetchOBReport(ctx context.Context, api obMarketAPI, query string, wallets []sharps.Wallet) (OBReport, error) {
 	query = strings.TrimSpace(query)
-	hit, err := api.FindMarket(ctx, query)
+	hit, err := resolvePosMarket(ctx, api, query, wallets)
 	if err != nil {
 		return OBReport{Query: query}, err
 	}

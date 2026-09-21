@@ -147,9 +147,10 @@ func posOutcomeRank(outcome string) int {
 	}
 }
 
-// resolvePosMarket picks a market for /pos. Explicit slugs, URLs, and condition
-// ids resolve directly; free-text queries prefer markets where tracked wallets
-// hold positions when several matches share the top text rank.
+// resolvePosMarket picks a market for /pos, /ob, /alert, and /lasttrades.
+// Explicit slugs, URLs, and condition ids resolve directly. Free-text queries
+// that hit several equal-rank names prefer the market with the largest tracked
+// (TradeWallet) net, then volume / liquidity interest.
 func resolvePosMarket(ctx context.Context, api interface {
 	posMarketAPI
 	positionLookup
@@ -194,6 +195,11 @@ func candidateConditionIDs(candidates []polymarket.SearchMarket) []string {
 	return ids
 }
 
+type marketScore struct {
+	holders int
+	size    float64
+}
+
 func pickMarketFromPositions(candidates []polymarket.SearchMarket, wallets []sharps.Wallet, byWallet map[string][]polymarket.Position) polymarket.SearchMarket {
 	if len(candidates) == 0 {
 		return polymarket.SearchMarket{}
@@ -211,10 +217,6 @@ func pickMarketFromPositions(candidates []polymarket.SearchMarket, wallets []sha
 		cidIndex[cid] = i
 	}
 
-	type marketScore struct {
-		holders int
-		size    float64
-	}
 	scores := make([]marketScore, len(candidates))
 	for _, w := range wallets {
 		addr := strings.ToLower(w.Address)
@@ -239,12 +241,25 @@ func pickMarketFromPositions(candidates []polymarket.SearchMarket, wallets []sha
 
 	bestIdx := 0
 	for i := 1; i < len(candidates); i++ {
-		if scores[i].holders > scores[bestIdx].holders ||
-			(scores[i].holders == scores[bestIdx].holders && scores[i].size > scores[bestIdx].size) {
+		if preferScoredMarket(scores[i], candidates[i], scores[bestIdx], candidates[bestIdx]) {
 			bestIdx = i
 		}
 	}
 	return candidates[bestIdx]
+}
+
+func preferScoredMarket(a marketScore, am polymarket.SearchMarket, b marketScore, bm polymarket.SearchMarket) bool {
+	if a.size != b.size {
+		return a.size > b.size
+	}
+	if a.holders != b.holders {
+		return a.holders > b.holders
+	}
+	ia, ib := polymarket.MarketInterest(am), polymarket.MarketInterest(bm)
+	if ia != ib {
+		return ia > ib
+	}
+	return am.Market.Question < bm.Market.Question
 }
 
 func filterPositionsByMarket(byWallet map[string][]polymarket.Position, conditionID string) map[string][]polymarket.Position {

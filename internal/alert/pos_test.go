@@ -220,6 +220,32 @@ func TestPickMarketByTrackedPositions(t *testing.T) {
 	}
 }
 
+func TestPickMarketPrefersLargeExposureOverManyHolders(t *testing.T) {
+	highVol := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xbig", Question: "Will Flavio win Serie A?"}, Volume24hr: 500000, Active: true}
+	crowd := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xcrowd", Question: "Will Flavio win a local race?"}, Volume24hr: 100, Active: true}
+	got := pickMarketFromPositions([]polymarket.SearchMarket{crowd, highVol}, []sharps.Wallet{
+		{Address: "0xaaa"}, {Address: "0xbbb"}, {Address: "0xccc"},
+	}, map[string][]polymarket.Position{
+		"0xaaa": {{ConditionID: "0xbig", Outcome: "Yes", Size: 5000}},
+		"0xbbb": {{ConditionID: "0xcrowd", Outcome: "Yes", Size: 2}},
+		"0xccc": {{ConditionID: "0xcrowd", Outcome: "No", Size: 3}},
+	})
+	if got.Market.ConditionID != "0xbig" {
+		t.Fatalf("want large exposure, got %+v", got)
+	}
+}
+
+func TestPickMarketInterestWhenNoHoldings(t *testing.T) {
+	thin := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xthin", Question: "A"}, Volume24hr: 10, Liquidity: 5, Active: true}
+	liquid := polymarket.SearchMarket{Market: polymarket.Market{ConditionID: "0xliq", Question: "B"}, Volume24hr: 80, Volume: 400, Liquidity: 200, Active: true}
+	got := pickMarketFromPositions([]polymarket.SearchMarket{thin, liquid}, []sharps.Wallet{{Address: "0xaaa"}}, map[string][]polymarket.Position{
+		"0xaaa": {{ConditionID: "0xother", Outcome: "Yes", Size: 9}},
+	})
+	if got.Market.ConditionID != "0xliq" {
+		t.Fatalf("want interest fallback, got %+v", got)
+	}
+}
+
 func TestFilterPositionsByMarket(t *testing.T) {
 	got := filterPositionsByMarket(map[string][]polymarket.Position{
 		"0xaaa": {
