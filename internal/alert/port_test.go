@@ -13,17 +13,26 @@ import (
 )
 
 func TestResolvePortWallet(t *testing.T) {
-	if _, msg := ResolvePortWallet(""); msg != PortUsage {
+	api := fakeUsers{
+		byName: map[string][]polymarket.UserProfile{
+			"newsharp": {{Address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Name: "NewSharp"}},
+		},
+	}
+	if _, msg := ResolvePortWallet(context.Background(), api, ""); msg != PortUsage {
 		t.Fatalf("empty: %q", msg)
 	}
-	if _, msg := ResolvePortWallet("all"); msg != PortUsage {
+	if _, msg := ResolvePortWallet(context.Background(), api, "all"); msg != PortUsage {
 		t.Fatalf("all: %q", msg)
 	}
-	w, msg := ResolvePortWallet("Flip")
+	w, msg := ResolvePortWallet(context.Background(), api, "Flip")
 	if msg != "" || w.Name != "Flipadelphia" {
 		t.Fatalf("Flip: %+v %q", w, msg)
 	}
-	if _, msg := ResolvePortWallet("no-such-trader"); !strings.Contains(msg, "No tracked trader") {
+	w, msg = ResolvePortWallet(context.Background(), api, "NewSharp")
+	if msg != "" || w.Name != "NewSharp" || w.Address != "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("untracked: %+v %q", w, msg)
+	}
+	if _, msg := ResolvePortWallet(context.Background(), api, "no-such-trader"); !strings.Contains(msg, "No Polymarket user") {
 		t.Fatalf("missing: %q", msg)
 	}
 }

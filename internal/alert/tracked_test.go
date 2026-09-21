@@ -152,9 +152,36 @@ func TestResolveUnaddPrefersLocalNameOverRenamedAPI(t *testing.T) {
 
 func TestHelpTextListsTrackedCommands(t *testing.T) {
 	h := HelpText(100)
-	for _, s := range []string{"/tracked", "/add", "/unadd"} {
+	for _, s := range []string{"/tracked", "/add", "/unadd", "any Polymarket name", "even if untracked"} {
 		if !strings.Contains(h, s) {
 			t.Fatal(h)
 		}
+	}
+}
+
+func TestResolveAnyTrader(t *testing.T) {
+	addr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	api := fakeUsers{
+		byName: map[string][]polymarket.UserProfile{
+			"newsharp": {{Address: addr, Name: "NewSharp"}},
+		},
+		byAddr: map[string]polymarket.UserProfile{
+			addr: {Address: addr, Name: "NewSharp"},
+		},
+	}
+	w, errMsg := ResolveAnyTrader(context.Background(), api, "Flip")
+	if errMsg != "" || w.Name != "Flipadelphia" {
+		t.Fatalf("tracked %+v %q", w, errMsg)
+	}
+	w, errMsg = ResolveAnyTrader(context.Background(), api, "NewSharp")
+	if errMsg != "" || w.Address != addr || w.Name != "NewSharp" {
+		t.Fatalf("name %+v %q", w, errMsg)
+	}
+	w, errMsg = ResolveAnyTrader(context.Background(), api, addr)
+	if errMsg != "" || w.Address != addr || w.Name != "NewSharp" {
+		t.Fatalf("wallet %+v %q", w, errMsg)
+	}
+	if _, errMsg := ResolveAnyTrader(context.Background(), api, "nope"); !strings.Contains(errMsg, "No Polymarket user") {
+		t.Fatalf("miss %q", errMsg)
 	}
 }
