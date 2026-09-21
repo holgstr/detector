@@ -185,38 +185,14 @@ func searchMarketFromGamma(g gammaMarket) SearchMarket {
 
 // PickBestMarket chooses an active, unresolved market for a word query.
 // Own titles/slugs outrank event titles (Andersson → Magdalena, not a sibling
-// in the same event). Then MarketInterest (24h volume, lifetime volume, liquidity).
+// in the same event). Name queries prefer the overall winner market (Flavio →
+// presidential election, not first-round most-votes). Then MarketInterest.
 func PickBestMarket(query string, hits []SearchMarket) (SearchMarket, bool) {
-	toks := searchTokens(query)
-	if len(toks) == 0 || len(hits) == 0 {
+	top := TopRankMatches(query, hits)
+	if len(top) == 0 {
 		return SearchMarket{}, false
 	}
-
-	type scored struct {
-		hit  SearchMarket
-		rank int
-	}
-	var matched []scored
-	for _, h := range hits {
-		if !isLiveMarket(h) || strings.TrimSpace(h.Market.ConditionID) == "" {
-			continue
-		}
-		rank := matchRank(h, toks)
-		if rank == 0 {
-			continue
-		}
-		matched = append(matched, scored{hit: h, rank: rank})
-	}
-	if len(matched) == 0 {
-		return SearchMarket{}, false
-	}
-	sort.SliceStable(matched, func(i, j int) bool {
-		if matched[i].rank != matched[j].rank {
-			return matched[i].rank > matched[j].rank
-		}
-		return preferMarket(matched[i].hit, matched[j].hit)
-	})
-	return matched[0].hit, true
+	return top[0], true
 }
 
 // MarketInterest is how "real" a colliding live market is: recent volume,
@@ -243,7 +219,9 @@ func preferMarket(a, b SearchMarket) bool {
 }
 
 // TopRankMatches returns live markets sharing the best text-match rank for
-// query, sorted by MarketInterest (same order as PickBestMarket).
+// query. Unless the query itself names a side market (most votes, first round,
+// …), overall winner contracts are kept and side markets dropped. Sorted by
+// MarketInterest (same order as PickBestMarket).
 func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
 	toks := searchTokens(query)
 	if len(toks) == 0 || len(hits) == 0 {
@@ -278,10 +256,107 @@ func TopRankMatches(query string, hits []SearchMarket) []SearchMarket {
 			top = append(top, m.hit)
 		}
 	}
+	top = preferPrimaryMarkets(top, toks)
 	sort.SliceStable(top, func(i, j int) bool {
 		return preferMarket(top[i], top[j])
 	})
 	return top
+}
+
+func preferPrimaryMarkets(hits []SearchMarket, toks []string) []SearchMarket {
+	if len(hits) <= 1 || queryWantsSideMarket(toks) {
+		return hits
+	}
+	var winners, rest []SearchMarket
+	for _, h := range hits {
+		if isSideMarket(h) {
+			continue
+		}
+		rest = append(rest, h)
+		if isOverallWinner(h) {
+			winners = append(winners, h)
+		}
+	}
+	if len(winners) > 0 {
+		return winners
+	}
+	if len(rest) > 0 {
+		return rest
+	}
+	return hits
+}
+
+func queryWantsSideMarket(toks []string) bool {
+	joined := " " + strings.Join(toks, " ") + " "
+	for _, w := range []string{
+		"votes", "round", "share", "runoff", "second", "third", "2nd", "3rd",
+		"debate", "arrest", "arrested", "charged", "qualify", "place",
+		"percent", "pct",
+	} {
+		if strings.Contains(joined, " "+w+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func isSideMarket(h SearchMarket) bool {
+	hay := marketText(h)
+	for _, p := range []string{
+		"most votes",
+		"first round",
+		"second place",
+		"third place",
+		"2nd place",
+		"3rd place",
+		"finish in",
+		"vote share",
+		"valid vote",
+		"runoff",
+		"qualify for",
+		"debate",
+		"charged",
+		"arrested",
+		"less than",
+		" or more of ",
+		"between ",
+	} {
+		if strings.Contains(hay, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isOverallWinner(h SearchMarket) bool {
+	if isSideMarket(h) {
+		return false
+	}
+	hay := marketText(h)
+	switch {
+	case strings.Contains(hay, "next prime minister"),
+		strings.Contains(hay, "next president"),
+		strings.Contains(hay, "be the next"):
+		return true
+	case strings.Contains(hay, " win the ") &&
+		(strings.Contains(hay, "election") ||
+			strings.Contains(hay, "president") ||
+			strings.Contains(hay, "prime minister") ||
+			strings.Contains(hay, "championship")):
+		return true
+	default:
+		return false
+	}
+}
+
+func marketText(h SearchMarket) string {
+	return foldSearchText(strings.Join([]string{
+		h.GroupItemTitle,
+		h.Market.Question,
+		h.EventTitle,
+		strings.ReplaceAll(h.Market.Slug, "-", " "),
+		strings.ReplaceAll(h.Market.EventSlug, "-", " "),
+	}, " "))
 }
 
 // IsExplicitMarketRef reports whether query is a condition id, market URL, or slug.
@@ -314,7 +389,7 @@ func marketHaystack(h SearchMarket) string {
 		h.Market.Question,
 		strings.ReplaceAll(h.Market.Slug, "-", " "),
 	}
-	return strings.ToLower(strings.Join(parts, " "))
+	return foldSearchText(strings.Join(parts, " "))
 }
 
 func eventHaystack(h SearchMarket) string {
@@ -322,12 +397,12 @@ func eventHaystack(h SearchMarket) string {
 		h.EventTitle,
 		strings.ReplaceAll(h.Market.EventSlug, "-", " "),
 	}
-	return strings.ToLower(strings.Join(parts, " "))
+	return foldSearchText(strings.Join(parts, " "))
 }
 
 func searchTokens(query string) []string {
 	var b strings.Builder
-	for _, r := range strings.ToLower(strings.TrimSpace(query)) {
+	for _, r := range foldSearchText(query) {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
 			continue
@@ -335,6 +410,51 @@ func searchTokens(query string) []string {
 		b.WriteByte(' ')
 	}
 	return strings.Fields(b.String())
+}
+
+// foldSearchText lowercases and strips Latin diacritics so "Flavio" matches "Flávio".
+func foldSearchText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		b.WriteRune(foldRune(r))
+	}
+	return b.String()
+}
+
+func foldRune(r rune) rune {
+	switch r {
+	case 'á', 'à', 'ä', 'â', 'ã', 'å', 'ă', 'ą':
+		return 'a'
+	case 'é', 'è', 'ë', 'ê', 'ě', 'ę':
+		return 'e'
+	case 'í', 'ì', 'ï', 'î':
+		return 'i'
+	case 'ó', 'ò', 'ö', 'ô', 'õ', 'ø':
+		return 'o'
+	case 'ú', 'ù', 'ü', 'û', 'ů':
+		return 'u'
+	case 'ý', 'ÿ':
+		return 'y'
+	case 'ç', 'ć', 'č':
+		return 'c'
+	case 'ñ', 'ń', 'ň':
+		return 'n'
+	case 'š', 'ś':
+		return 's'
+	case 'ž', 'ź', 'ż':
+		return 'z'
+	case 'ł':
+		return 'l'
+	case 'ř':
+		return 'r'
+	case 'ď':
+		return 'd'
+	case 'ť':
+		return 't'
+	default:
+		return r
+	}
 }
 
 func haystackHasAll(haystack string, toks []string) bool {
