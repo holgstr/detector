@@ -184,6 +184,14 @@ func TestParseCommand(t *testing.T) {
 	if got.Cmd != CmdOBP || got.Market != "FL_GOV_2026.REP" {
 		t.Fatalf("obp mention %+v", got)
 	}
+	got = ParseCommand("/obk florida governor")
+	if got.Cmd != CmdOBK || got.Market != "florida governor" {
+		t.Fatalf("obk %+v", got)
+	}
+	got = ParseCommand("/obk@detectx_bot KXFEDDECISION-26OCT-H0")
+	if got.Cmd != CmdOBK || got.Market != "KXFEDDECISION-26OCT-H0" {
+		t.Fatalf("obk mention %+v", got)
+	}
 
 	got = ParseCommand("/alert Andersson")
 	if got.Cmd != CmdAlert || got.Market != "Andersson" || got.Price != 0 {
