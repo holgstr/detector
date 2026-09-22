@@ -17,6 +17,7 @@
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size
 // (keyword queries pick large tracked exposure, else the most traded live market).
 // /obp <market> prints the same ladder from Pascal (an event name shows every outcome).
+// /obk <market> prints that ladder from Kalshi (an event name shows every outcome).
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // Each ping shows the market name and the same inside ladder as /ob.
@@ -42,6 +43,7 @@ import (
 	"time"
 
 	"github.com/holgstr/detector/internal/alert"
+	"github.com/holgstr/detector/internal/kalshi"
 	"github.com/holgstr/detector/internal/pascal"
 	"github.com/holgstr/detector/internal/polymarket"
 	"github.com/holgstr/detector/internal/sharps"
@@ -90,6 +92,7 @@ func main() {
 	client := polymarket.NewClient()
 	client.Workers = 3
 	pascalAPI := pascal.NewClient()
+	kalshiAPI := kalshi.NewClient()
 
 	var tg *telegram.Client
 	if !*dryRun {
@@ -115,7 +118,7 @@ func main() {
 			}
 			log.Print("restarts consume the previous /start; ping the bot again if this hangs")
 		}
-		go listenChat(ctx, tg, client, pascalAPI, b)
+		go listenChat(ctx, tg, client, pascalAPI, kalshiAPI, b)
 		if err := b.waitBound(ctx); err != nil {
 			log.Fatalf("telegram: %v", err)
 		}
@@ -281,7 +284,7 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 	return nil
 }
 
-func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, b *bot) {
+func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, kbooks *kalshi.Client, b *bot) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return
@@ -308,12 +311,12 @@ func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client
 			continue
 		}
 		for _, u := range updates {
-			handleUpdate(ctx, tg, api, books, b, u)
+			handleUpdate(ctx, tg, api, books, kbooks, b, u)
 		}
 	}
 }
 
-func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, b *bot, u telegram.Update) {
+func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, kbooks *kalshi.Client, b *bot, u telegram.Update) {
 	b.mu.Lock()
 	b.state.TelegramOffset = u.UpdateID + 1
 	if u.Message == nil || u.Message.Chat.ID == 0 {
@@ -378,6 +381,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdOBP {
 		replyOBP(ctx, tg, books, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdOBK {
+		replyOBK(ctx, tg, kbooks, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdAlert {
 		replyAlert(ctx, tg, api, b, chatID, cmd)
@@ -739,6 +745,40 @@ func replyOBP(ctx context.Context, tg *telegram.Client, api *pascal.Client, chat
 		log.Printf("reply: %v", err)
 	}
 	log.Printf("obp query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
+}
+
+func replyOBK(ctx context.Context, tg *telegram.Client, api *kalshi.Client, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /obk <market> — words or a Kalshi ticker."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchKalshiOB(ctx, api, query)
+	if err != nil && len(rep.Books) == 0 {
+		msg := fmt.Sprintf("No live Kalshi market matching %q.", query)
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "short query") {
+			msg = "Usage: /obk <market> — at least 3 characters, or a ticker like KXFEDDECISION-26OCT-H0."
+		} else if strings.Contains(low, "resolved") {
+			msg = fmt.Sprintf("%q is resolved, not a live Kalshi market.", query)
+		} else if !strings.Contains(low, "no live") && !strings.Contains(low, "matching") {
+			msg = fmt.Sprintf("Couldn't load Kalshi order book: %v", err)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	text := alert.FormatKalshiOB(rep)
+	if err != nil {
+		text += fmt.Sprintf("\n(partial fetch: %v)", err)
+	}
+	if err := tg.SendMessage(ctx, chatID, text); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("obk query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
 }
 
 func runPriceAlerts(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b *bot, dryRun bool) error {
