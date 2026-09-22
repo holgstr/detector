@@ -122,7 +122,7 @@ func ParseCommand(text string) ParsedCommand {
 		return ParsedCommand{Cmd: CmdOB, Market: strings.TrimSpace(rest)}
 	case "obp", "pascal", "pascalbook", "pascal-book":
 		return ParsedCommand{Cmd: CmdOBP, Market: strings.TrimSpace(rest)}
-	case "obk", "kalshi", "kalshibook", "kalshi-book":
+	case "obk":
 		return ParsedCommand{Cmd: CmdOBK, Market: strings.TrimSpace(rest)}
 	case "alert", "pricealert", "price-alert", "askalert", "ask-alert", "bidalert", "bid-alert":
 		return parseAlertCommand(rest)
