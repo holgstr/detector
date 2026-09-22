@@ -65,10 +65,7 @@ func KellyText(price, fv float64) string {
 		return fmt.Sprintf("No edge at %s (FV %s).", formatTickPrice(r.Price, 0.01), formatTickPrice(r.FV, 0.01))
 	}
 	return fmt.Sprintf(
-		"Kelly · buy %s @ %s  FV %s\nFull  %s\nHalf  %s\n1/3   %s\n1/4   %s",
-		r.Side,
-		formatTickPrice(r.Price, 0.01),
-		formatTickPrice(r.FV, 0.01),
+		"Full  %s\nHalf  %s\n1/3   %s\n1/4   %s",
 		formatKellyPct(r.Full),
 		formatKellyPct(r.Half),
 		formatKellyPct(r.Third),

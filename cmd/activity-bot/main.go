@@ -429,7 +429,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/alert <market> then ask price and min size for a Yes take watch.\n/pricewatch <market> YES|NO <cents> pings when that side moves, then re-anchors.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/help for commands.",
 		len(sharps.List()), alert.MinSizeStatus(minUSD))
 }
 
@@ -942,7 +942,7 @@ func replyAlertConfirm(ctx context.Context, tg *telegram.Client, b *bot, chatID 
 	draft := b.state.PendingPriceAlert
 	if !ok || draft == nil {
 		b.mu.Unlock()
-		if err := tg.SendMessage(ctx, chatID, "Send ask price and min size, e.g. 32 1000 — or /cancel."); err != nil {
+		if err := tg.SendMessage(ctx, chatID, "32 1000, or /cancel."); err != nil {
 			log.Printf("reply: %v", err)
 		}
 		return

@@ -30,7 +30,7 @@ func TestCommandRepliesHelp(t *testing.T) {
 
 func TestCommandRepliesKelly(t *testing.T) {
 	got := commandReplies(false, alert.ParsedCommand{Cmd: alert.CmdKelly, Price: 0.40, FV: 0.50}, 100)
-	if len(got) != 1 || !strings.Contains(got[0], "Full") || !strings.Contains(got[0], "buy YES") {
+	if len(got) != 1 || !strings.Contains(got[0], "Full") || strings.Contains(got[0], "Kelly") {
 		t.Fatalf("%q", got)
 	}
 	got = commandReplies(false, alert.ParsedCommand{Cmd: alert.CmdKelly}, 100)

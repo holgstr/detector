@@ -124,7 +124,7 @@ func TestFormatPortReport(t *testing.T) {
 		t.Fatalf("chunks=%d", len(chunks))
 	}
 	got := chunks[0]
-	if !strings.Contains(got, "Portfolio · Alice") {
+	if !strings.HasPrefix(got, "Alice\n") || strings.Contains(got, "Portfolio") {
 		t.Fatalf("head: %s", got)
 	}
 	if !strings.Contains(got, "8.6k YES  Market A | 61c → 64c") {

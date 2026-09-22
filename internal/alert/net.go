@@ -316,14 +316,9 @@ func clampNetWindow(d time.Duration) time.Duration {
 }
 
 // FormatNetReport is one or more Telegram bodies (split under the 4096 cap).
-func FormatNetReport(r NetReport, query string) []string {
-	head := fmt.Sprintf("Net change · last %s", formatWindow(r.Window))
-	if n := strings.TrimSpace(query); n != "" && !strings.EqualFold(n, "all") {
-		head += " · " + n
-	}
-
+func FormatNetReport(r NetReport, _ string) []string {
 	if len(r.Traders) == 0 {
-		body := head + "\nNo net position changes (sports excluded; flat markets omitted)."
+		body := "No net position changes."
 		if r.Truncated {
 			body += "\n(Feed truncated — try a shorter window.)"
 		}
@@ -357,9 +352,9 @@ func FormatNetReport(r NetReport, query string) []string {
 		blocks = append(blocks, b.String())
 	}
 
-	prefix := head
+	prefix := ""
 	if r.Truncated {
-		prefix += "\n(Feed truncated — some fills may be missing.)"
+		prefix = "(Feed truncated — some fills may be missing.)"
 	}
 	return chunkTelegram(prefix, blocks)
 }
@@ -368,11 +363,21 @@ func chunkTelegram(prefix string, blocks []string) []string {
 	var chunks []string
 	cur := prefix
 	for i, block := range blocks {
-		sep := "\n\n"
+		sep := ""
+		if cur != "" {
+			sep = "\n\n"
+		}
 		next := cur + sep + block
 		if i > 0 && len(next) > telegramChunk {
 			chunks = append(chunks, cur)
-			cur = prefix + " (cont.)" + sep + block
+			cur = prefix
+			if cur != "" {
+				cur += " (cont.)"
+			}
+			if cur != "" {
+				cur += "\n\n"
+			}
+			cur += block
 			continue
 		}
 		cur = next

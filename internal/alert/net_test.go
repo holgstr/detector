@@ -184,7 +184,7 @@ func TestFormatNetReport(t *testing.T) {
 		t.Fatalf("chunks=%d", len(chunks))
 	}
 	got := chunks[0]
-	if !strings.Contains(got, "Net change · last 6h · SnowLover7") {
+	if strings.Contains(got, "Net change") || !strings.HasPrefix(got, "SnowLover7\n") {
 		t.Fatalf("head: %s", got)
 	}
 	if !strings.Contains(got, "+10 YES  Fed decision?") {

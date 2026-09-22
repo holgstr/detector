@@ -206,7 +206,7 @@ func isSeedAddress(addr string) bool {
 // FormatTrackedList is the /tracked reply (names only).
 func FormatTrackedList(wallets []sharps.Wallet) string {
 	if len(wallets) == 0 {
-		return "Not tracking any wallets. /add <wallet or name> to start."
+		return "Not tracking any wallets."
 	}
 	names := make([]string, 0, len(wallets))
 	for _, w := range wallets {
@@ -219,18 +219,7 @@ func FormatTrackedList(wallets []sharps.Wallet) string {
 	sort.Slice(names, func(i, j int) bool {
 		return strings.ToLower(names[i]) < strings.ToLower(names[j])
 	})
-	noun := "wallets"
-	if len(names) == 1 {
-		noun = "wallet"
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Tracking %d %s:\n", len(names), noun)
-	for _, n := range names {
-		b.WriteString("• ")
-		b.WriteString(n)
-		b.WriteByte('\n')
-	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.Join(names, "\n")
 }
 
 func shortWallet(addr string) string {

@@ -396,7 +396,7 @@ func FormatPortReport(r PortReport) []string {
 	if name == "" {
 		name = r.Wallet
 	}
-	head := "Portfolio · " + name
+	head := name
 	if r.Truncated {
 		head += "\n(Position book truncated — some small holdings may be missing.)"
 	}

@@ -44,7 +44,10 @@ func TestComputeKellyNoEdge(t *testing.T) {
 
 func TestKellyText(t *testing.T) {
 	text := KellyText(0.40, 0.50)
-	for _, s := range []string{"buy YES", "40¢", "50¢", "Full", "Half", "1/3", "1/4", "16.7%"} {
+	if strings.Contains(text, "Kelly") || strings.Contains(text, "40¢") {
+		t.Fatalf("headline leaked: %q", text)
+	}
+	for _, s := range []string{"Full", "Half", "1/3", "1/4", "16.7%"} {
 		if !strings.Contains(text, s) {
 			t.Fatalf("missing %q in %q", s, text)
 		}

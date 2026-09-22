@@ -148,7 +148,7 @@ func TestUpsertAndRemovePriceAlert(t *testing.T) {
 
 func TestPriceAlertPromptAndPing(t *testing.T) {
 	text := PriceAlertPrompt(PriceAlertDraft{Title: "Aliens?", URL: "https://polymarket.com/event/x"})
-	if !strings.Contains(text, "Aliens?") || !strings.Contains(text, "32 1000") || !strings.Contains(text, "asks") {
+	if !strings.HasPrefix(text, "Aliens?") || !strings.Contains(text, "32 1000") || strings.Contains(text, "Watch Yes") {
 		t.Fatalf("%q", text)
 	}
 	book := polymarket.OutcomeBook{

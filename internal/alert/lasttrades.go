@@ -249,18 +249,22 @@ func FetchLastTradesReport(ctx context.Context, api interface {
 
 // FormatLastTradesReport is one or more Telegram bodies (split under the 4096 cap).
 func FormatLastTradesReport(r LastTradesReport) []string {
-	head := fmt.Sprintf("Last trades · last %s", formatWindow(r.Window))
+	var headParts []string
 	if n := strings.TrimSpace(r.TraderQuery); n != "" && !strings.EqualFold(n, "all") {
-		head += " · " + n
+		headParts = append(headParts, n)
 	}
 	if t := strings.TrimSpace(r.MarketTitle); t != "" {
-		head += " · " + t
+		headParts = append(headParts, t)
 	} else if m := strings.TrimSpace(r.MarketQuery); m != "" {
-		head += " · " + m
+		headParts = append(headParts, m)
 	}
+	head := strings.Join(headParts, " · ")
 
 	if len(r.Trades) == 0 {
-		body := head + "\nNo fills"
+		body := "No fills"
+		if head != "" {
+			body = head + "\n" + body
+		}
 		if r.DroppedSport && strings.TrimSpace(r.MarketQuery) == "" {
 			body += " (sports excluded)"
 		}
@@ -297,11 +301,20 @@ func FormatLastTradesReport(r LastTradesReport) []string {
 		}
 		blocks = append(blocks, line)
 	}
+	var notes []string
 	if r.Truncated {
-		head += "\n(Feed truncated — some fills may be missing.)"
+		notes = append(notes, "(Feed truncated — some fills may be missing.)")
 	}
 	if r.Capped {
-		head += fmt.Sprintf("\n(Showing the %d most recent.)", maxLastTrades)
+		notes = append(notes, fmt.Sprintf("(Showing the %d most recent.)", maxLastTrades))
+	}
+	if len(notes) > 0 {
+		note := strings.Join(notes, "\n")
+		if head != "" {
+			head += "\n" + note
+		} else {
+			head = note
+		}
 	}
 	return chunkTelegram(head, blocks)
 }
