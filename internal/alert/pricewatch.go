@@ -50,6 +50,7 @@ type PriceWatchHit struct {
 	From  float64
 	To    float64
 	Moves []PriceWatchMove
+	Book  polymarket.OutcomeBook
 }
 
 // WatchFill is a tape print used to evaluate a price watch.
@@ -126,47 +127,12 @@ func PriceWatchSetText(w PriceWatch) string {
 }
 
 // PriceWatchPingText is the Telegram body for one meaningful move.
+// It leads with the market name and the same ladder /ob prints.
 func PriceWatchPingText(h PriceWatchHit) string {
-	w := h.Watch
-	title := priceWatchTitle(w)
-	side := strings.ToUpper(strings.TrimSpace(w.Outcome))
-	sign := "+"
-	if h.To < h.From {
-		sign = "-"
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s · %s\n", side, formatWatchPrice(h.To), title)
-	fmt.Fprintf(&b, "%s%s from %s", sign, formatWatchCents(math.Abs(h.To-h.From)), formatWatchPrice(h.From))
-	if via := moveVia(h.Moves); via != "" {
-		b.WriteString(" via ")
-		b.WriteString(via)
-	}
-	b.WriteByte('\n')
-	b.WriteString(formatWatchQuote(w))
-	fmt.Fprintf(&b, "\nnext %s or %s", formatWatchPrice(h.To-w.Delta), formatWatchPrice(h.To+w.Delta))
-	nFill := 0
-	for _, m := range h.Moves {
-		if m.Kind == "fill" {
-			nFill++
-		}
-	}
-	shown := 0
-	for _, m := range h.Moves {
-		if m.Kind != "fill" {
-			continue
-		}
-		if shown == 3 {
-			fmt.Fprintf(&b, "\n+%d more fills", nFill-shown)
-			break
-		}
-		side := strings.ToUpper(strings.TrimSpace(m.Side))
-		if side == "" {
-			side = "FILL"
-		}
-		fmt.Fprintf(&b, "\n%s %s @ %s", side, formatShares(m.Size), formatWatchPrice(m.Price))
-		shown++
-	}
-	return b.String()
+	return FormatOBReport(OBReport{
+		Title: priceWatchTitle(h.Watch),
+		Books: []polymarket.OutcomeBook{bookForDisplay(h.Book)},
+	})
 }
 
 // FormatPriceWatchList is /pricewatch with no args.
@@ -306,7 +272,7 @@ func EvaluatePriceWatch(w PriceWatch, book polymarket.OutcomeBook, fills []Watch
 		updated := next
 		updated.Anchor = to
 		stampWatchQuote(&updated, bid, ask, mid, hasBid, hasAsk, hasMid, anchor)
-		hit = &PriceWatchHit{Watch: updated, From: w.Anchor, To: to, Moves: moves}
+		hit = &PriceWatchHit{Watch: updated, From: w.Anchor, To: to, Moves: moves, Book: book}
 		next = updated
 		return hit, next
 	}
@@ -595,35 +561,6 @@ func splitWatchQuery(query string) (market, outcome string) {
 		return strings.TrimSpace(strings.Join(fields[1:], " ")), side
 	}
 	return strings.TrimSpace(query), ""
-}
-
-func moveVia(moves []PriceWatchMove) string {
-	order := []string{"mid", "bid", "ask", "fill"}
-	seen := map[string]bool{}
-	var parts []string
-	for _, kind := range order {
-		for _, m := range moves {
-			if m.Kind == kind && !seen[kind] {
-				seen[kind] = true
-				parts = append(parts, kind)
-			}
-		}
-	}
-	return strings.Join(parts, ", ")
-}
-
-func formatWatchQuote(w PriceWatch) string {
-	bid, ask := "—", "—"
-	if w.HasBid {
-		bid = formatWatchPrice(w.Bid)
-	}
-	if w.HasAsk {
-		ask = formatWatchPrice(w.Ask)
-	}
-	if w.HasMid {
-		return fmt.Sprintf("mid %s · bid %s · ask %s", formatWatchPrice(w.Mid), bid, ask)
-	}
-	return fmt.Sprintf("bid %s · ask %s", bid, ask)
 }
 
 func formatWatchPrice(p float64) string {

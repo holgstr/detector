@@ -60,8 +60,15 @@ func TestPriceWatchMidpointStepsThenReanchors(t *testing.T) {
 		t.Fatalf("from %v to %v", hit.From, hit.To)
 	}
 	text := PriceWatchPingText(*hit)
-	if !strings.Contains(text, "NO 84.5¢") || !strings.Contains(text, "81.5¢") || !strings.Contains(text, "via mid") || !strings.Contains(text, "next 81.5¢ or 87.5¢") {
+	want := FormatOBReport(OBReport{Title: "Merz December", Books: []polymarket.OutcomeBook{bookForDisplay(hit.Book)}})
+	if text != want {
+		t.Fatalf("want /ob body:\n%s\ngot:\n%s", want, text)
+	}
+	if !strings.HasPrefix(text, "Merz December\n") || !strings.Contains(text, "NO") || !strings.Contains(text, "85¢") || !strings.Contains(text, "84¢") {
 		t.Fatalf("%s", text)
+	}
+	if strings.Contains(text, "via mid") || strings.Contains(text, "next ") {
+		t.Fatalf("old ping format leaked:\n%s", text)
 	}
 
 	hit, next = EvaluatePriceWatch(next, bookAt(0.84, 0.85), nil)
@@ -81,8 +88,11 @@ func TestPriceWatchDownMove(t *testing.T) {
 		t.Fatalf("%+v", hit)
 	}
 	text := PriceWatchPingText(*hit)
-	if !strings.Contains(text, "NO 78.5¢") || !strings.Contains(text, "-3¢") {
+	if !strings.HasPrefix(text, "Merz December\n") || !strings.Contains(text, "79¢") || !strings.Contains(text, "78¢") {
 		t.Fatalf("%s", text)
+	}
+	if strings.Contains(text, "-3¢") || strings.Contains(text, "NO 78.5¢") {
+		t.Fatalf("old ping format leaked:\n%s", text)
 	}
 }
 
@@ -93,8 +103,9 @@ func TestPriceWatchBidOrFillWithoutMidMove(t *testing.T) {
 	if hit == nil || math.Abs(hit.To-0.845) > 1e-9 {
 		t.Fatalf("ask %+v", hit)
 	}
-	if !strings.Contains(PriceWatchPingText(*hit), "via ask") {
-		t.Fatal(PriceWatchPingText(*hit))
+	text := PriceWatchPingText(*hit)
+	if !strings.HasPrefix(text, "Merz December\n") || !strings.Contains(text, "85¢") {
+		t.Fatalf("%s", text)
 	}
 
 	w = armedWatch(0.81, 0.82)
@@ -104,8 +115,8 @@ func TestPriceWatchBidOrFillWithoutMidMove(t *testing.T) {
 	if hit == nil || math.Abs(hit.To-0.785) > 1e-9 {
 		t.Fatalf("fill %+v", hit)
 	}
-	text := PriceWatchPingText(*hit)
-	if !strings.Contains(text, "SELL 1.2k @ 78.5¢") || !strings.Contains(text, "via fill") {
+	text = PriceWatchPingText(*hit)
+	if !strings.HasPrefix(text, "Merz December\n") || strings.Contains(text, "via fill") || strings.Contains(text, "SELL 1.2k") {
 		t.Fatalf("%s", text)
 	}
 	// Old midpoint is now a full 3¢ from the fill anchor, but it has not changed.
