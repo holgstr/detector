@@ -18,6 +18,7 @@
 // (keyword queries pick large tracked exposure, else the most traded live market).
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
+// Each ping shows the market name and the same inside ladder as /ob.
 // /unalert <market> stops a watch. /cancel aborts the confirm step.
 // /pricewatch <market> <YES|NO> <cents> pings when that side's price moves by N cents
 // (a fill, or the inside bid/ask, including the midpoint), then re-anchors there.
@@ -722,7 +723,7 @@ func runPriceAlerts(ctx context.Context, api *polymarket.Client, tg *telegram.Cl
 		if !alert.PriceAlertStillArmed(armed, hit.Alert) {
 			continue
 		}
-		text := alert.PriceAlertPingText(hit.Alert, hit.Size)
+		text := alert.PriceAlertPingText(hit.Alert, hit.Size, hit.Book)
 		if dryRun {
 			fmt.Println(text)
 			fmt.Println("---")

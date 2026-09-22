@@ -46,6 +46,7 @@ type yesBookAPI interface {
 type PriceAlertHit struct {
 	Alert PriceAlert
 	Size  float64
+	Book  polymarket.OutcomeBook
 }
 
 // PriceAlertPrompt is the Telegram body after a market is found.
@@ -84,18 +85,43 @@ func PriceAlertSetText(a PriceAlert) string {
 }
 
 // PriceAlertPingText is the Telegram body when the book qualifies.
-func PriceAlertPingText(a PriceAlert, size float64) string {
+// It leads with the market name and the same Yes ladder /ob prints.
+func PriceAlertPingText(a PriceAlert, size float64, book polymarket.OutcomeBook) string {
 	title := strings.TrimSpace(a.Title)
 	if title == "" {
 		title = a.Slug
 	}
-	return fmt.Sprintf(
-		"Ask alert · %s\n%s shares at %s or lower (need %s)",
-		title,
+	shown := bookForDisplay(book)
+	tick := shown.Tick
+	if tick <= 0 {
+		tick = 0.01
+	}
+	ladder := FormatOBReport(OBReport{
+		Title: title,
+		Books: []polymarket.OutcomeBook{shown},
+	})
+	reason := fmt.Sprintf(
+		"Ask alert · %s shares at %s or lower (need %s)",
 		formatTickSize(size),
-		formatTickPrice(a.Price, 0.01),
+		formatTickPrice(a.Price, tick),
 		formatTickSize(a.MinSize),
 	)
+	return ladder + "\n\n" + reason
+}
+
+// bookForDisplay keeps the 4 closest ticks with size on each side, matching /ob.
+func bookForDisplay(book polymarket.OutcomeBook) polymarket.OutcomeBook {
+	tick := book.Tick
+	if tick <= 0 {
+		tick = 0.01
+	}
+	return polymarket.OutcomeBook{
+		Outcome: book.Outcome,
+		TokenID: book.TokenID,
+		Tick:    tick,
+		Bids:    polymarket.ClosestTicks(book.Bids, tick, polymarket.OrderBookDepth, true),
+		Asks:    polymarket.ClosestTicks(book.Asks, tick, polymarket.OrderBookDepth, false),
+	}
 }
 
 // FormatPriceAlertList is /alert with no args.
@@ -338,7 +364,7 @@ func CheckPriceAlerts(ctx context.Context, api yesBookAPI, alerts []PriceAlert, 
 		size := polymarket.SizeAtOrBelow(book.Asks, a.Price)
 		if ShouldFirePriceAlert(a, size, now) {
 			a.LastNotifiedUnix = now.Unix()
-			fired = append(fired, PriceAlertHit{Alert: a, Size: size})
+			fired = append(fired, PriceAlertHit{Alert: a, Size: size, Book: book})
 		}
 		next = append(next, a)
 	}
