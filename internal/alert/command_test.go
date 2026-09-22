@@ -196,6 +196,30 @@ func TestParseCommand(t *testing.T) {
 	if ParseCommand("/cancel").Cmd != CmdCancel {
 		t.Fatal("cancel")
 	}
+
+	got = ParseCommand("/pricewatch Merz December NO 3")
+	if got.Cmd != CmdPriceWatch || got.Market != "Merz December" || got.Outcome != "No" || got.Delta != 0.03 {
+		t.Fatalf("pricewatch %+v", got)
+	}
+	got = ParseCommand("/pricewatch@detectx_bot Merz December YES 1.5")
+	if got.Cmd != CmdPriceWatch || got.Market != "Merz December" || got.Outcome != "Yes" || got.Delta != 0.015 {
+		t.Fatalf("pricewatch mention %+v", got)
+	}
+	got = ParseCommand("/price-watch Merz December 3c NO")
+	if got.Cmd != CmdPriceWatch || got.Market != "Merz December" || got.Outcome != "No" || got.Delta != 0.03 {
+		t.Fatalf("pricewatch swapped %+v", got)
+	}
+	got = ParseCommand("/pricewatch")
+	if got.Cmd != CmdPriceWatch || got.Market != "" || got.Delta != 0 {
+		t.Fatalf("pricewatch list %+v", got)
+	}
+	if ParseCommand("/pricewatch Merz 3").Cmd != CmdHelp {
+		t.Fatal("pricewatch missing side → help")
+	}
+	got = ParseCommand("/unpricewatch Merz December NO")
+	if got.Cmd != CmdUnpriceWatch || got.Market != "Merz December NO" {
+		t.Fatalf("unpricewatch %+v", got)
+	}
 }
 
 func TestEffectiveMinUSD(t *testing.T) {

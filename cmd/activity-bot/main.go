@@ -19,6 +19,9 @@
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // /unalert <market> stops a watch. /cancel aborts the confirm step.
+// /pricewatch <market> <YES|NO> <cents> pings when that side's price moves by N cents
+// (a fill, or the inside bid/ask, including the midpoint), then re-anchors there.
+// /unpricewatch <market> stops one.
 // /tracked lists watched names; /add and /unadd take a wallet id or name (name → current id).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).
 package main
@@ -216,6 +219,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 		if err := runPriceAlerts(ctx, api, tg, b, dryRun); err != nil {
 			log.Printf("price alerts: %v", err)
 		}
+		if err := runPriceWatches(ctx, api, tg, b, dryRun); err != nil {
+			log.Printf("price watches: %v", err)
+		}
 		return nil
 	}
 	alerts := plan.Alerts
@@ -231,6 +237,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 		}
 		if err := runPriceAlerts(ctx, api, tg, b, dryRun); err != nil {
 			log.Printf("price alerts: %v", err)
+		}
+		if err := runPriceWatches(ctx, api, tg, b, dryRun); err != nil {
+			log.Printf("price watches: %v", err)
 		}
 		return nil
 	}
@@ -261,6 +270,9 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 	log.Printf("sent %d/%d alerts", sent, len(alerts))
 	if err := runPriceAlerts(ctx, api, tg, b, dryRun); err != nil {
 		log.Printf("price alerts: %v", err)
+	}
+	if err := runPriceWatches(ctx, api, tg, b, dryRun); err != nil {
+		log.Printf("price watches: %v", err)
 	}
 	return nil
 }
@@ -366,6 +378,12 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdUnalert {
 		replyUnalert(ctx, tg, b, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdPriceWatch {
+		replyPriceWatch(ctx, tg, api, b, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdUnpriceWatch {
+		replyUnpriceWatch(ctx, tg, b, chatID, cmd)
+	}
 	if cmd.Cmd == alert.CmdCancel {
 		replyCancel(ctx, tg, b, chatID)
 	}
@@ -410,7 +428,7 @@ func commandReplies(first bool, cmd alert.ParsedCommand, min float64) []string {
 }
 
 func welcome(minUSD float64) string {
-	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/alert <market> then ask price and min size for a Yes take watch.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
+	return fmt.Sprintf("Watching %d wallets. I'll ping you on new trades.\n%s\n/net 6h for net position changes (with avg price).\n/pos <market> for tracked holdings.\n/port <trader> for that trader's open nets.\n/lasttrades [trader] [market] [24h] for recent fills.\n/kelly <price> <fv> for full/half/1/3/1/4 Kelly.\n/ob <market> for the 4 closest Yes ticks on each side.\n/alert <market> then ask price and min size for a Yes take watch.\n/pricewatch <market> YES|NO <cents> pings when that side moves, then re-anchors.\n/tracked to list wallets. /add and /unadd to change the list.\n/update to pull GitHub main and restart.\n/help for commands.",
 		len(sharps.List()), alert.MinSizeStatus(minUSD))
 }
 
@@ -724,6 +742,142 @@ func runPriceAlerts(ctx context.Context, api *polymarket.Client, tg *telegram.Cl
 		log.Printf("sent %d price alerts", sent)
 	}
 	return nil
+}
+
+func runPriceWatches(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b *bot, dryRun bool) error {
+	b.mu.Lock()
+	watches := append([]alert.PriceWatch(nil), b.state.PriceWatches...)
+	chatID := b.state.ChatID
+	b.mu.Unlock()
+	if len(watches) == 0 {
+		return nil
+	}
+	fired, next := alert.CheckPriceWatches(ctx, api, watches, time.Now())
+	b.mu.Lock()
+	b.state.ApplyPriceWatchPoll(next)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	armed := &alert.State{PriceWatches: append([]alert.PriceWatch(nil), b.state.PriceWatches...)}
+	b.mu.Unlock()
+
+	sent := 0
+	for _, hit := range fired {
+		if !alert.PriceWatchStillArmed(armed, hit.Watch) {
+			continue
+		}
+		text := alert.PriceWatchPingText(hit)
+		if dryRun {
+			fmt.Println(text)
+			fmt.Println("---")
+			sent++
+			continue
+		}
+		if tg == nil || chatID == 0 {
+			continue
+		}
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("price watch %s: %v", hit.Watch.Title, err)
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		log.Printf("sent %d price watches", sent)
+	}
+	return nil
+}
+
+func replyPriceWatch(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		b.mu.Lock()
+		list := alert.FormatPriceWatchList(b.state.PriceWatches)
+		b.mu.Unlock()
+		if err := tg.SendMessage(ctx, chatID, list); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	draft, errMsg := alert.ResolvePriceAlertMarket(ctx, api, query, sharps.List())
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	book, err := api.FetchOutcomeBook(ctx, draft.ConditionID, cmd.Outcome)
+	if err != nil {
+		title := strings.TrimSpace(draft.Title)
+		if title == "" {
+			title = query
+		}
+		msg := fmt.Sprintf("Couldn't load the %s book: %v", cmd.Outcome, err)
+		if strings.Contains(strings.ToLower(err.Error()), "outcome") {
+			msg = fmt.Sprintf("%s has no %s side.", title, cmd.Outcome)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	row, errMsg := alert.NewPriceWatch(draft, cmd.Outcome, cmd.Delta, book, time.Now())
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	b.mu.Lock()
+	b.state.UpsertPriceWatch(row)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	b.mu.Unlock()
+	if err := tg.SendMessage(ctx, chatID, alert.PriceWatchSetText(row)); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("price watch set market=%q outcome=%s anchor=%.4f delta=%.4f", row.Title, row.Outcome, row.Anchor, row.Delta)
+}
+
+func replyUnpriceWatch(ctx context.Context, tg *telegram.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	b.mu.Lock()
+	got, ok := b.state.RemovePriceWatch(query)
+	if !ok {
+		n := len(b.state.PriceWatches)
+		list := alert.FormatPriceWatchList(b.state.PriceWatches)
+		b.mu.Unlock()
+		msg := "No matching price watch."
+		if query == "" && n > 1 {
+			msg = "Which watch? /unpricewatch <market>\n" + list
+		} else if n == 0 {
+			msg = list
+		} else if n > 1 {
+			msg = "Which watch? Add YES or NO if both sides are on.\n" + list
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	title := strings.TrimSpace(got.Title)
+	if title == "" {
+		title = got.Slug
+	}
+	n := len(b.state.PriceWatches)
+	b.mu.Unlock()
+	msg := fmt.Sprintf("Stopped price watch on %s %s.", title, strings.ToUpper(got.Outcome))
+	if n > 0 {
+		msg += fmt.Sprintf(" %d left.", n)
+	}
+	if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("price watch removed market=%q outcome=%s", title, got.Outcome)
 }
 
 func replyAlert(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {

@@ -138,6 +138,42 @@ func (c *Client) FetchOutcomeBooks(ctx context.Context, conditionID string) ([]O
 	return out, nil
 }
 
+// FetchOutcomeBook loads the full CLOB for one outcome (Yes, No, or a named side).
+func (c *Client) FetchOutcomeBook(ctx context.Context, conditionID, outcome string) (OutcomeBook, error) {
+	conditionID = strings.TrimSpace(conditionID)
+	outcome = strings.TrimSpace(outcome)
+	if conditionID == "" {
+		return OutcomeBook{}, fmt.Errorf("empty condition id")
+	}
+	if outcome == "" {
+		return OutcomeBook{}, fmt.Errorf("empty outcome")
+	}
+	g, err := c.fetchGammaByCondition(ctx, conditionID)
+	if err != nil {
+		return OutcomeBook{}, err
+	}
+	m := toMarket(g)
+	idx := -1
+	for i, name := range m.Outcomes {
+		if strings.EqualFold(strings.TrimSpace(name), outcome) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx >= len(m.TokenIDs) {
+		return OutcomeBook{}, fmt.Errorf("no %s outcome", outcome)
+	}
+	name := strings.TrimSpace(m.Outcomes[idx])
+	if name == "" {
+		name = outcome
+	}
+	book, err := c.fetchOrderBook(ctx, m.TokenIDs[idx])
+	if err != nil {
+		return OutcomeBook{}, err
+	}
+	return outcomeBookFromClob(name, m.TokenIDs[idx], book, 0), nil
+}
+
 // FetchYesBook loads the full CLOB for the Yes token (or the first outcome).
 func (c *Client) FetchYesBook(ctx context.Context, conditionID string) (OutcomeBook, error) {
 	conditionID = strings.TrimSpace(conditionID)
