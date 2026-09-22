@@ -16,6 +16,7 @@
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size
 // (keyword queries pick large tracked exposure, else the most traded live market).
+// /obp <market> prints the same ladder from Pascal (an event name shows every outcome).
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // Each ping shows the market name and the same inside ladder as /ob.
@@ -41,6 +42,7 @@ import (
 	"time"
 
 	"github.com/holgstr/detector/internal/alert"
+	"github.com/holgstr/detector/internal/pascal"
 	"github.com/holgstr/detector/internal/polymarket"
 	"github.com/holgstr/detector/internal/sharps"
 	"github.com/holgstr/detector/internal/telegram"
@@ -87,6 +89,7 @@ func main() {
 
 	client := polymarket.NewClient()
 	client.Workers = 3
+	pascalAPI := pascal.NewClient()
 
 	var tg *telegram.Client
 	if !*dryRun {
@@ -112,7 +115,7 @@ func main() {
 			}
 			log.Print("restarts consume the previous /start; ping the bot again if this hangs")
 		}
-		go listenChat(ctx, tg, client, b)
+		go listenChat(ctx, tg, client, pascalAPI, b)
 		if err := b.waitBound(ctx); err != nil {
 			log.Fatalf("telegram: %v", err)
 		}
@@ -278,7 +281,7 @@ func runPoll(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b
 	return nil
 }
 
-func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot) {
+func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, b *bot) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return
@@ -305,12 +308,12 @@ func listenChat(ctx context.Context, tg *telegram.Client, api *polymarket.Client
 			continue
 		}
 		for _, u := range updates {
-			handleUpdate(ctx, tg, api, b, u)
+			handleUpdate(ctx, tg, api, books, b, u)
 		}
 	}
 }
 
-func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, u telegram.Update) {
+func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, b *bot, u telegram.Update) {
 	b.mu.Lock()
 	b.state.TelegramOffset = u.UpdateID + 1
 	if u.Message == nil || u.Message.Chat.ID == 0 {
@@ -372,6 +375,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdOB {
 		replyOB(ctx, tg, api, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdOBP {
+		replyOBP(ctx, tg, books, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdAlert {
 		replyAlert(ctx, tg, api, b, chatID, cmd)
@@ -699,6 +705,40 @@ func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, c
 		log.Printf("reply: %v", err)
 	}
 	log.Printf("ob query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
+}
+
+func replyOBP(ctx context.Context, tg *telegram.Client, api *pascal.Client, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /obp <market> — words or a Pascal symbol."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchPascalOB(ctx, api, query)
+	if err != nil && len(rep.Books) == 0 {
+		msg := fmt.Sprintf("No live Pascal market matching %q.", query)
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "short query") {
+			msg = "Usage: /obp <market> — at least 3 characters, or a symbol like FL_GOV_2026.REP."
+		} else if strings.Contains(low, "resolved") {
+			msg = fmt.Sprintf("%q is resolved, not a live Pascal market.", query)
+		} else if !strings.Contains(low, "no live") && !strings.Contains(low, "matching") {
+			msg = fmt.Sprintf("Couldn't load Pascal order book: %v", err)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	text := alert.FormatPascalOB(rep)
+	if err != nil {
+		text += fmt.Sprintf("\n(partial fetch: %v)", err)
+	}
+	if err := tg.SendMessage(ctx, chatID, text); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("obp query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
 }
 
 func runPriceAlerts(ctx context.Context, api *polymarket.Client, tg *telegram.Client, b *bot, dryRun bool) error {

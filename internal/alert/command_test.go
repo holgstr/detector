@@ -176,6 +176,14 @@ func TestParseCommand(t *testing.T) {
 	if ParseCommand("/orderbook").Cmd != CmdOB {
 		t.Fatal("orderbook alias")
 	}
+	got = ParseCommand("/obp florida governor")
+	if got.Cmd != CmdOBP || got.Market != "florida governor" {
+		t.Fatalf("obp %+v", got)
+	}
+	got = ParseCommand("/obp@detectx_bot FL_GOV_2026.REP")
+	if got.Cmd != CmdOBP || got.Market != "FL_GOV_2026.REP" {
+		t.Fatalf("obp mention %+v", got)
+	}
 
 	got = ParseCommand("/alert Andersson")
 	if got.Cmd != CmdAlert || got.Market != "Andersson" || got.Price != 0 {
