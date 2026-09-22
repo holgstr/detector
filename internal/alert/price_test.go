@@ -151,9 +151,34 @@ func TestPriceAlertPromptAndPing(t *testing.T) {
 	if !strings.Contains(text, "Aliens?") || !strings.Contains(text, "32 1000") || !strings.Contains(text, "asks") {
 		t.Fatalf("%q", text)
 	}
-	ping := PriceAlertPingText(PriceAlert{Title: "Aliens?", Price: 0.32, MinSize: 1000}, 1500)
+	book := polymarket.OutcomeBook{
+		Outcome: "Yes",
+		Tick:    0.01,
+		Bids: []polymarket.BookLevel{
+			{Price: 0.31, Size: 50},
+			{Price: 0.30, Size: 100},
+			{Price: 0.29, Size: 10},
+			{Price: 0.28, Size: 5},
+			{Price: 0.20, Size: 9999},
+		},
+		Asks: []polymarket.BookLevel{
+			{Price: 0.32, Size: 400},
+			{Price: 0.33, Size: 20},
+			{Price: 0.34, Size: 10},
+			{Price: 0.35, Size: 5},
+			{Price: 0.40, Size: 8000},
+		},
+	}
+	ping := PriceAlertPingText(PriceAlert{Title: "Aliens?", Price: 0.32, MinSize: 1000}, 1500, book)
+	wantLadder := FormatOBReport(OBReport{Title: "Aliens?", Books: []polymarket.OutcomeBook{bookForDisplay(book)}})
+	if !strings.HasPrefix(ping, wantLadder+"\n\n") {
+		t.Fatalf("ping missing /ob body:\n%s", ping)
+	}
 	if !strings.Contains(ping, "Ask alert") || !strings.Contains(ping, "1.5k") || !strings.Contains(ping, "32¢") {
 		t.Fatalf("%q", ping)
+	}
+	if strings.Contains(ping, "20¢") || strings.Contains(ping, "40¢") || strings.Contains(ping, "YES") {
+		t.Fatalf("full book or outcome label leaked:\n%s", ping)
 	}
 	list := FormatPriceAlertList(nil)
 	if !strings.Contains(list, "No price alerts") {
