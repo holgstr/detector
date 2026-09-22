@@ -62,7 +62,7 @@ func TestFormatTrackedListNamesOnly(t *testing.T) {
 		{Address: "0x1", Name: "Beta"},
 		{Address: "0x2", Name: "alpha"},
 	})
-	if !strings.Contains(got, "Tracking 2 wallets") || !strings.Contains(got, "• alpha") || !strings.Contains(got, "• Beta") {
+	if got != "alpha\nBeta" {
 		t.Fatal(got)
 	}
 	if strings.Contains(got, "0x") {

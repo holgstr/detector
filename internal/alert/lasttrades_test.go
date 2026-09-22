@@ -78,7 +78,7 @@ func TestBuildLastTradesReportRespectsSince(t *testing.T) {
 
 func TestFormatLastTradesReportEmpty(t *testing.T) {
 	got := FormatLastTradesReport(LastTradesReport{Window: 24 * time.Hour})
-	if len(got) != 1 || !strings.Contains(got[0], "No fills") || !strings.Contains(got[0], "last 1d") {
+	if len(got) != 1 || got[0] != "No fills." || strings.Contains(got[0], "Last trades") {
 		t.Fatalf("%q", got)
 	}
 }

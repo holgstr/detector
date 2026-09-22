@@ -112,10 +112,9 @@ func PriceWatchSetText(w PriceWatch) string {
 	title := priceWatchTitle(w)
 	side := strings.ToUpper(strings.TrimSpace(w.Outcome))
 	var b strings.Builder
-	fmt.Fprintf(&b, "Price watch · %s %s\n", title, side)
-	fmt.Fprintf(&b, "Anchored at %s. Ping on a %s move (%s or %s) — a fill, or a bid/ask — then re-anchor.",
+	fmt.Fprintf(&b, "%s %s\n%s · %s or %s",
+		title, side,
 		formatWatchPrice(w.Anchor),
-		formatWatchCents(w.Delta),
 		formatWatchPrice(w.Anchor-w.Delta),
 		formatWatchPrice(w.Anchor+w.Delta),
 	)
@@ -123,9 +122,6 @@ func PriceWatchSetText(w PriceWatch) string {
 		b.WriteByte('\n')
 		b.WriteString(u)
 	}
-	b.WriteString("\n/unpricewatch ")
-	b.WriteString(title)
-	b.WriteString(" to stop.")
 	return b.String()
 }
 
@@ -176,14 +172,15 @@ func PriceWatchPingText(h PriceWatchHit) string {
 // FormatPriceWatchList is /pricewatch with no args.
 func FormatPriceWatchList(watches []PriceWatch) string {
 	if len(watches) == 0 {
-		return "No price watches. /pricewatch <market> <YES|NO> <cents> — e.g. /pricewatch Merz December NO 3"
+		return "No price watches."
 	}
 	var b strings.Builder
-	b.WriteString("Price watches:")
-	for _, w := range watches {
-		fmt.Fprintf(&b, "\n%s %s — %s ± %s", priceWatchTitle(w), strings.ToUpper(w.Outcome), formatWatchPrice(w.Anchor), formatWatchCents(w.Delta))
+	for i, w := range watches {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%s %s — %s ± %s", priceWatchTitle(w), strings.ToUpper(w.Outcome), formatWatchPrice(w.Anchor), formatWatchCents(w.Delta))
 	}
-	b.WriteString("\n/unpricewatch <market> to stop one. /pricewatch <market> <YES|NO> <cents> to add.")
 	return b.String()
 }
 

@@ -371,7 +371,7 @@ func HelpText(minUSD float64) string {
 // MinSizeStatus is the reply after /minsize or a change.
 func MinSizeStatus(minUSD float64) string {
 	if minUSD <= 0 {
-		return "Min size is off — every fill is sent. /minsize 100 to match the Activity tab."
+		return "Min size is off."
 	}
-	return fmt.Sprintf("Min size is %s. Same-market same-direction fills are added up first, then this floor is applied. /minsize 0 to turn off.", formatUSD(minUSD))
+	return fmt.Sprintf("Min size is %s.", formatUSD(minUSD))
 }
