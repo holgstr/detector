@@ -171,6 +171,44 @@ func TestFetchYesBookUsesFullDepth(t *testing.T) {
 	}
 }
 
+func TestFetchOutcomeBookNo(t *testing.T) {
+	gamma := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]gammaMarket{{
+			ConditionID:  "0xabc",
+			Outcomes:     `["Yes","No"]`,
+			ClobTokenIDs: `["tok-yes","tok-no"]`,
+			Active:       true,
+		}})
+	}))
+	defer gamma.Close()
+
+	clob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("token_id") != "tok-no" {
+			t.Fatalf("unexpected token %s", r.URL.Query().Get("token_id"))
+		}
+		_ = json.NewEncoder(w).Encode(clobBookResponse{
+			TickSize: flexNumber{V: 0.01},
+			Bids:     []clobLevel{{Price: flexNumber{V: 0.81}, Size: flexNumber{V: 10}}},
+			Asks:     []clobLevel{{Price: flexNumber{V: 0.82}, Size: flexNumber{V: 12}}},
+		})
+	}))
+	defer clob.Close()
+
+	c := NewClient()
+	c.GammaBase = gamma.URL
+	c.ClobBase = clob.URL
+	got, err := c.FetchOutcomeBook(context.Background(), "0xabc", "NO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Outcome != "No" || mathAbs(got.Bids[0].Price-0.81) > 1e-9 || mathAbs(got.Asks[0].Price-0.82) > 1e-9 {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := c.FetchOutcomeBook(context.Background(), "0xabc", "Maybe"); err == nil {
+		t.Fatal("expected missing outcome")
+	}
+}
+
 func TestFlexNumberUnmarshal(t *testing.T) {
 	var b clobBookResponse
 	if err := json.Unmarshal([]byte(`{"tick_size":"0.001","bids":[{"price":"0.041","size":"480.45"}]}`), &b); err != nil {

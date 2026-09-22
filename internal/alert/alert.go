@@ -41,6 +41,8 @@ type State struct {
 	PendingPriceAlert *PriceAlertDraft `json:"pending_price_alert,omitempty"`
 	// PriceAlerts are live Yes-ask size watches (take side).
 	PriceAlerts []PriceAlert `json:"price_alerts,omitempty"`
+	// PriceWatches ping when a Yes or No price moves by a set number of cents.
+	PriceWatches []PriceWatch `json:"price_watches,omitempty"`
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.

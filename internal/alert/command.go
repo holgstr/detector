@@ -29,6 +29,8 @@ const (
 	CmdOB
 	CmdAlert
 	CmdUnalert
+	CmdPriceWatch
+	CmdUnpriceWatch
 	CmdCancel
 )
 
@@ -43,9 +45,11 @@ type ParsedCommand struct {
 	Price   float64
 	FV      float64
 	MinSize float64
+	Outcome string
+	Delta   float64
 }
 
-// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /port [trader], /lasttrades [trader] [market] [Nh], /tracked, /add, /unadd, /kelly, /ob, /alert, /unalert, /cancel, and /update.
+// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /port [trader], /lasttrades [trader] [market] [Nh], /tracked, /add, /unadd, /kelly, /ob, /alert, /unalert, /pricewatch, /unpricewatch, /cancel, and /update.
 func ParseCommand(text string) ParsedCommand {
 	line := strings.TrimSpace(text)
 	if line == "" {
@@ -118,6 +122,10 @@ func ParseCommand(text string) ParsedCommand {
 		return parseAlertCommand(rest)
 	case "unalert", "un-alert", "delalert", "stopalert":
 		return ParsedCommand{Cmd: CmdUnalert, Market: strings.TrimSpace(rest)}
+	case "pricewatch", "price-watch", "price_watch":
+		return parsePriceWatchCommand(rest)
+	case "unpricewatch", "un-pricewatch", "un_pricewatch", "stoppricewatch":
+		return ParsedCommand{Cmd: CmdUnpriceWatch, Market: strings.TrimSpace(rest)}
 	case "cancel":
 		return ParsedCommand{Cmd: CmdCancel}
 	default:
@@ -141,6 +149,71 @@ func parseAlertCommand(rest string) ParsedCommand {
 		}
 	}
 	return ParsedCommand{Cmd: CmdAlert, Market: rest}
+}
+
+func parsePriceWatchCommand(rest string) ParsedCommand {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ParsedCommand{Cmd: CmdPriceWatch}
+	}
+	market, outcome, delta, ok := parsePriceWatchArgs(rest)
+	if !ok {
+		return ParsedCommand{Cmd: CmdHelp}
+	}
+	return ParsedCommand{Cmd: CmdPriceWatch, Market: market, Outcome: outcome, Delta: delta}
+}
+
+// parsePriceWatchArgs reads "<market> YES|NO <cents>" or "<market> <cents> YES|NO".
+// Delta is returned in probability units (3 cents → 0.03).
+func parsePriceWatchArgs(rest string) (market, outcome string, delta float64, ok bool) {
+	fields := strings.Fields(rest)
+	if len(fields) < 3 {
+		return "", "", 0, false
+	}
+	last := fields[len(fields)-1]
+	prev := fields[len(fields)-2]
+	market = strings.TrimSpace(strings.Join(fields[:len(fields)-2], " "))
+	if market == "" {
+		return "", "", 0, false
+	}
+	if d, okd := parseDeltaCents(last); okd {
+		if side, oks := parseSide(prev); oks {
+			return market, side, d, true
+		}
+	}
+	if d, okd := parseDeltaCents(prev); okd {
+		if side, oks := parseSide(last); oks {
+			return market, side, d, true
+		}
+	}
+	return "", "", 0, false
+}
+
+func parseSide(s string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "yes":
+		return "Yes", true
+	case "no":
+		return "No", true
+	default:
+		return "", false
+	}
+}
+
+func parseDeltaCents(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(s, "¢")
+	s = strings.TrimSuffix(s, "c")
+	s = strings.TrimSuffix(s, "C")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 || v >= 100 {
+		return 0, false
+	}
+	return v / 100, true
 }
 
 func parseLastTradesArgs(rest string) (time.Duration, string, string, bool) {
@@ -292,7 +365,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL; ambiguous names prefer large tracked nets)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value (any Polymarket name)\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; names resolve even if untracked; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words pick tracked-heavy or high-volume markets)\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000)\n/unalert <market> — stop a price alert\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match)\n/pos <market> — tracked holdings (words, slug, or URL; ambiguous names prefer large tracked nets)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value (any Polymarket name)\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; names resolve even if untracked; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words pick tracked-heavy or high-volume markets)\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000)\n/unalert <market> — stop a price alert\n/pricewatch <market> <YES|NO> <cents> — ping when that side moves by N cents (fill, or bid/ask), then re-anchor\n/unpricewatch <market> — stop a price watch\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.
