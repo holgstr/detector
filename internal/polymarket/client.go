@@ -144,12 +144,61 @@ func (c *Client) FetchHolders(ctx context.Context, conditionID string, limit int
 	if limit > 20 {
 		limit = 20
 	}
-	u := fmt.Sprintf("%s/holders?market=%s&limit=%d", dataBase, url.QueryEscape(conditionID), limit)
+	u := fmt.Sprintf("%s/holders?market=%s&limit=%d", c.dataAPI(), url.QueryEscape(conditionID), limit)
 	var out []holdersResponse
 	if err := c.getJSON(ctx, u, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// ListHolders returns top holders for a condition, labeled YES or NO.
+// limit is per outcome token (the data API caps this at 20).
+func (c *Client) ListHolders(ctx context.Context, conditionID string, limit int) ([]OutcomeHolder, error) {
+	groups, err := c.FetchHolders(ctx, strings.TrimSpace(conditionID), limit)
+	if err != nil {
+		return nil, err
+	}
+	return flattenHolders(groups), nil
+}
+
+func flattenHolders(groups []holdersResponse) []OutcomeHolder {
+	indexed := false
+	for _, g := range groups {
+		for _, h := range g.Holders {
+			if h.OutcomeIndex == 0 || h.OutcomeIndex == 1 {
+				indexed = true
+			}
+		}
+	}
+	var out []OutcomeHolder
+	for i, g := range groups {
+		for _, h := range g.Holders {
+			wallet := strings.ToLower(strings.TrimSpace(h.ProxyWallet))
+			if wallet == "" || h.Amount == 0 {
+				continue
+			}
+			outcome := "YES"
+			if indexed {
+				if h.OutcomeIndex == 1 {
+					outcome = "NO"
+				}
+			} else if i > 0 {
+				outcome = "NO"
+			}
+			name := strings.TrimSpace(h.Name)
+			if name == "" {
+				name = strings.TrimSpace(h.Pseudonym)
+			}
+			out = append(out, OutcomeHolder{
+				Wallet:  wallet,
+				Name:    name,
+				Size:    h.Amount,
+				Outcome: outcome,
+			})
+		}
+	}
+	return out
 }
 
 // FetchLifetimePnL returns all-time PnL for a proxy wallet from the leaderboard API.

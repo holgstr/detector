@@ -48,11 +48,20 @@ type gammaMarket struct {
 	} `json:"events"`
 }
 
+// OutcomeHolder is one wallet's balance on one side of a market.
+type OutcomeHolder struct {
+	Wallet  string
+	Name    string
+	Size    float64
+	Outcome string // YES or NO
+}
+
 type holdersResponse struct {
 	Token   string `json:"token"`
 	Holders []struct {
 		ProxyWallet  string  `json:"proxyWallet"`
 		Name         string  `json:"name"`
+		Pseudonym    string  `json:"pseudonym"`
 		Amount       float64 `json:"amount"`
 		OutcomeIndex int     `json:"outcomeIndex"`
 	} `json:"holders"`

@@ -11,6 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
+// /holders <market> lists the top 10 holders on each side (net if a wallet holds both), with acquisition price.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
@@ -370,6 +371,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdPos {
 		replyPos(ctx, tg, api, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdHolders {
+		replyHolders(ctx, tg, api, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdPort {
 		replyPort(ctx, tg, api, chatID, cmd)
@@ -1140,6 +1144,43 @@ func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 		}
 	}
 	log.Printf("pos query=%q market=%q holders=%d", query, rep.Title, len(rep.Holdings))
+}
+
+func replyHolders(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /holders <market> — words, slug, or URL."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchHoldersReport(ctx, api, query, sharps.List())
+	if err != nil && len(rep.Holdings) == 0 && rep.Title == "" {
+		msg := fmt.Sprintf("No active market matching %q.", query)
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "resolved") {
+			msg = fmt.Sprintf("%q is resolved, not an active market.", query)
+		} else if !strings.Contains(low, "active market") && !strings.Contains(low, "no active") {
+			msg = fmt.Sprintf("Couldn't load market: %v", err)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	if err != nil && len(rep.Holdings) == 0 {
+		if err := tg.SendMessage(ctx, chatID, fmt.Sprintf("Couldn't load holders: %v", err)); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	chunks := alert.FormatHoldersReport(rep)
+	for _, text := range chunks {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+	log.Printf("holders query=%q market=%q holders=%d", query, rep.Title, len(rep.Holdings))
 }
 
 func countMarkets(r alert.NetReport) int {
