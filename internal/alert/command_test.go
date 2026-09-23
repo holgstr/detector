@@ -75,6 +75,14 @@ func TestParseCommand(t *testing.T) {
 	if got.Cmd != CmdPos || got.Market != "" {
 		t.Fatalf("pos empty %+v", got)
 	}
+	got = ParseCommand("/holders Andersson")
+	if got.Cmd != CmdHolders || got.Market != "Andersson" {
+		t.Fatalf("holders %+v", got)
+	}
+	got = ParseCommand("/holder@detectx_bot Magdalena Andersson")
+	if got.Cmd != CmdHolders || got.Market != "Magdalena Andersson" {
+		t.Fatalf("holders mention %+v", got)
+	}
 
 	got = ParseCommand("/port Flip")
 	if got.Cmd != CmdPort || got.Trader != "Flip" || got.Limit != 0 {
