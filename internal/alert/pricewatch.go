@@ -4,16 +4,16 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/holgstr/detector/internal/polymarket"
 )
 
-// PriceWatch pings when one outcome's price moves by Delta from Anchor,
-// then re-anchors at the new price. A move is a new midpoint, an inside
-// bid or ask, or a fill at least Delta away from the anchor.
+// PriceWatch pings when the watched price moves by Delta from Anchor,
+// then re-anchors at the new price. The watched price is the midpoint
+// when both sides are quoted, otherwise the only inside quote. A fill
+// or a wider spread that leaves that price inside the band is not a move.
 type PriceWatch struct {
 	Title       string   `json:"title,omitempty"`
 	Slug        string   `json:"slug,omitempty"`
@@ -53,18 +53,8 @@ type PriceWatchHit struct {
 	Book  polymarket.OutcomeBook
 }
 
-// WatchFill is a tape print used to evaluate a price watch.
-type WatchFill struct {
-	Key       string
-	Price     float64
-	Size      float64
-	Side      string
-	Timestamp int64
-}
-
 type priceWatchAPI interface {
 	FetchOutcomeBook(ctx context.Context, conditionID, outcome string) (polymarket.OutcomeBook, error)
-	FetchTrades(ctx context.Context, opt polymarket.FetchTradesOptions) ([]polymarket.Trade, bool, error)
 }
 
 // NewPriceWatch anchors a watch on the current midpoint (or the only inside quote).
@@ -239,29 +229,18 @@ func PriceWatchStillArmed(s *State, w PriceWatch) bool {
 	return false
 }
 
-// EvaluatePriceWatch compares a book and new fills with the anchor.
+// EvaluatePriceWatch compares the watched price with the anchor.
 // Quotes already outside the band stay quiet until they come back inside.
-func EvaluatePriceWatch(w PriceWatch, book polymarket.OutcomeBook, fills []WatchFill) (*PriceWatchHit, PriceWatch) {
+// A book that drops a side and then reprints the same prices is not a move.
+func EvaluatePriceWatch(w PriceWatch, book polymarket.OutcomeBook) (*PriceWatchHit, PriceWatch) {
 	next := w
-	next.TradeKeys = append([]string(nil), w.TradeKeys...)
 	bid, ask, bidSz, askSz, hasBid, hasAsk := insideQuote(book)
 	mid, hasMid := watchMid(hasBid, hasAsk, bid, ask)
-	fresh := noteWatchFills(&next, fills)
 
 	var moves []PriceWatchMove
-	if hasMid && !w.MidLatched && priceMoved(mid, w.Anchor, w.Delta) && quoteChanged(w.HasMid, w.Mid, true, mid) {
-		moves = append(moves, PriceWatchMove{Kind: "mid", Price: mid})
-	}
-	if hasBid && !w.BidLatched && priceMoved(bid, w.Anchor, w.Delta) && quoteChanged(w.HasBid, w.Bid, true, bid) {
-		moves = append(moves, PriceWatchMove{Kind: "bid", Price: bid, Size: bidSz})
-	}
-	if hasAsk && !w.AskLatched && priceMoved(ask, w.Anchor, w.Delta) && quoteChanged(w.HasAsk, w.Ask, true, ask) {
-		moves = append(moves, PriceWatchMove{Kind: "ask", Price: ask, Size: askSz})
-	}
-	for _, f := range fresh {
-		if priceMoved(f.Price, w.Anchor, w.Delta) {
-			moves = append(moves, PriceWatchMove{Kind: "fill", Price: f.Price, Size: f.Size, Side: f.Side})
-		}
+	if kind, price, size, ok := watchedPrice(hasBid, hasAsk, hasMid, bid, ask, bidSz, askSz, mid); ok &&
+		priceMoved(price, w.Anchor, w.Delta) && watchedPriceChanged(w, kind, price) {
+		moves = append(moves, PriceWatchMove{Kind: kind, Price: price, Size: size})
 	}
 
 	anchor := w.Anchor
@@ -280,11 +259,8 @@ func EvaluatePriceWatch(w PriceWatch, book polymarket.OutcomeBook, fills []Watch
 	return nil, next
 }
 
-// CheckPriceWatches loads books and recent fills and returns pings.
-func CheckPriceWatches(ctx context.Context, api priceWatchAPI, watches []PriceWatch, now time.Time) (fired []PriceWatchHit, next []PriceWatch) {
-	if now.IsZero() {
-		now = time.Now()
-	}
+// CheckPriceWatches loads books and returns pings.
+func CheckPriceWatches(ctx context.Context, api priceWatchAPI, watches []PriceWatch, _ time.Time) (fired []PriceWatchHit, next []PriceWatch) {
 	next = make([]PriceWatch, 0, len(watches))
 	for _, w := range watches {
 		book, err := api.FetchOutcomeBook(ctx, w.ConditionID, w.Outcome)
@@ -292,108 +268,13 @@ func CheckPriceWatches(ctx context.Context, api priceWatchAPI, watches []PriceWa
 			next = append(next, w)
 			continue
 		}
-		var fills []WatchFill
-		start := w.TradeUnix
-		if start <= 0 {
-			start = now.Add(-time.Minute).Unix()
-		}
-		trades, _, err := api.FetchTrades(ctx, polymarket.FetchTradesOptions{
-			Market:   w.ConditionID,
-			Start:    start,
-			PageSize: 100,
-		})
-		if err == nil {
-			fills = watchFillsFromTrades(w.Outcome, trades)
-		}
-		hit, updated := EvaluatePriceWatch(w, book, fills)
+		hit, updated := EvaluatePriceWatch(w, book)
 		if hit != nil {
 			fired = append(fired, *hit)
 		}
 		next = append(next, updated)
 	}
 	return fired, next
-}
-
-func watchFillsFromTrades(outcome string, trades []polymarket.Trade) []WatchFill {
-	out := make([]WatchFill, 0, len(trades))
-	for _, t := range trades {
-		if !strings.EqualFold(strings.TrimSpace(t.Outcome), outcome) {
-			continue
-		}
-		if t.Price <= 0 {
-			continue
-		}
-		out = append(out, WatchFill{
-			Key:       watchFillKey(t),
-			Price:     t.Price,
-			Size:      t.Size,
-			Side:      t.Side,
-			Timestamp: t.Timestamp,
-		})
-	}
-	return out
-}
-
-func watchFillKey(t polymarket.Trade) string {
-	return t.TransactionHash + "|" + strings.ToLower(t.ProxyWallet) + "|" + t.Asset + "|" +
-		strconv.FormatInt(t.Timestamp, 10) + "|" + strconv.FormatFloat(t.Size, 'f', -1, 64)
-}
-
-func noteWatchFills(w *PriceWatch, fills []WatchFill) []WatchFill {
-	seen := make(map[string]struct{}, len(w.TradeKeys))
-	for _, k := range w.TradeKeys {
-		if k != "" {
-			seen[k] = struct{}{}
-		}
-	}
-	fresh := make([]WatchFill, 0, len(fills))
-	for _, f := range fills {
-		if f.Key == "" || f.Timestamp <= 0 {
-			continue
-		}
-		if f.Timestamp < w.TradeUnix {
-			continue
-		}
-		if f.Timestamp == w.TradeUnix {
-			if _, ok := seen[f.Key]; ok {
-				continue
-			}
-		}
-		fresh = append(fresh, f)
-	}
-	maxTs := w.TradeUnix
-	for _, f := range fresh {
-		if f.Timestamp > maxTs {
-			maxTs = f.Timestamp
-		}
-	}
-	keys := make([]string, 0, len(w.TradeKeys)+len(fresh))
-	if maxTs == w.TradeUnix {
-		keys = append(keys, w.TradeKeys...)
-	}
-	have := make(map[string]struct{}, len(keys))
-	for _, k := range keys {
-		have[k] = struct{}{}
-	}
-	add := func(k string, ts int64) {
-		if k == "" || ts != maxTs {
-			return
-		}
-		if _, ok := have[k]; ok {
-			return
-		}
-		have[k] = struct{}{}
-		keys = append(keys, k)
-	}
-	for _, f := range fills {
-		add(f.Key, f.Timestamp)
-	}
-	for _, f := range fresh {
-		add(f.Key, f.Timestamp)
-	}
-	w.TradeUnix = maxTs
-	w.TradeKeys = keys
-	return fresh
 }
 
 // pickWatchAnchor prefers the new midpoint. A fill or quote takes over only
@@ -429,12 +310,21 @@ func pickWatchAnchor(anchor, delta, mid float64, moves []PriceWatchMove) float64
 }
 
 func stampWatchQuote(w *PriceWatch, bid, ask, mid float64, hasBid, hasAsk, hasMid bool, anchor float64) {
-	w.HasBid, w.Bid = hasBid, bid
-	w.HasAsk, w.Ask = hasAsk, ask
-	w.HasMid, w.Mid = hasMid, mid
-	w.BidLatched = hasBid && priceMoved(bid, anchor, w.Delta) && !samePrice(bid, anchor)
-	w.AskLatched = hasAsk && priceMoved(ask, anchor, w.Delta) && !samePrice(ask, anchor)
-	w.MidLatched = hasMid && priceMoved(mid, anchor, w.Delta) && !samePrice(mid, anchor)
+	// Keep the last price when a side is missing so a gap cannot look like
+	// a new quote when the same level comes back.
+	if hasBid {
+		w.Bid = bid
+	}
+	if hasAsk {
+		w.Ask = ask
+	}
+	if hasMid {
+		w.Mid = mid
+	}
+	w.HasBid, w.HasAsk, w.HasMid = hasBid, hasAsk, hasMid
+	w.BidLatched = w.Bid > 0 && priceMoved(w.Bid, anchor, w.Delta) && !samePrice(w.Bid, anchor)
+	w.AskLatched = w.Ask > 0 && priceMoved(w.Ask, anchor, w.Delta) && !samePrice(w.Ask, anchor)
+	w.MidLatched = w.Mid > 0 && priceMoved(w.Mid, anchor, w.Delta) && !samePrice(w.Mid, anchor)
 }
 
 func insideQuote(book polymarket.OutcomeBook) (bid, ask, bidSz, askSz float64, hasBid, hasAsk bool) {
@@ -485,14 +375,38 @@ func watchAnchor(hasBid, hasAsk, hasMid bool, bid, ask, mid float64) (float64, b
 	return 0, false
 }
 
-func quoteChanged(had bool, prev float64, has bool, cur float64) bool {
-	if had != has {
-		return true
+// watchedPrice is the midpoint, or the only inside quote when the other side is missing.
+func watchedPrice(hasBid, hasAsk, hasMid bool, bid, ask, bidSz, askSz, mid float64) (kind string, price, size float64, ok bool) {
+	if hasMid {
+		return "mid", mid, 0, true
 	}
-	if !has {
-		return false
+	if hasBid && !hasAsk {
+		return "bid", bid, bidSz, true
 	}
-	return !samePrice(prev, cur)
+	if hasAsk && !hasBid {
+		return "ask", ask, askSz, true
+	}
+	return "", 0, 0, false
+}
+
+// watchedPriceChanged is false when this poll's price is the same level we
+// already stored for that kind. A switch between midpoint and a one-sided
+// quote still counts, so a one-sided spike can alert on the way back.
+func watchedPriceChanged(w PriceWatch, kind string, price float64) bool {
+	var prev float64
+	switch kind {
+	case "mid":
+		prev = w.Mid
+	case "bid":
+		prev = w.Bid
+	case "ask":
+		prev = w.Ask
+	}
+	if prev > 0 && samePrice(prev, price) {
+		prevKind, _, _, prevOK := watchedPrice(w.HasBid, w.HasAsk, w.HasMid, w.Bid, w.Ask, 0, 0, w.Mid)
+		return prevOK && prevKind != kind
+	}
+	return true
 }
 
 func priceMoved(price, anchor, delta float64) bool {

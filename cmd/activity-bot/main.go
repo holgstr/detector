@@ -22,8 +22,9 @@
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // Each ping shows the market name and the same inside ladder as /ob.
 // /unalert <market> stops a watch. /cancel aborts the confirm step.
-// /pricewatch <market> <YES|NO> <cents> pings when that side's price moves by N cents
-// (a fill, or the inside bid/ask, including the midpoint), then re-anchors there.
+// /pricewatch <market> <YES|NO> <cents> pings when that side's midpoint moves by N cents,
+// then re-anchors there. A one-sided book uses that quote. Fills and spread wiggles
+// that leave the midpoint inside the band stay quiet.
 // /unpricewatch <market> stops one.
 // /tracked lists watched names; /add and /unadd take a wallet id or name (name → current id).
 // /update pulls origin/main, rebuilds, and restarts (bound chat only).

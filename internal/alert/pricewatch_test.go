@@ -47,12 +47,12 @@ func TestNewPriceWatchAnchorsMidpoint(t *testing.T) {
 
 func TestPriceWatchMidpointStepsThenReanchors(t *testing.T) {
 	w := armedWatch(0.81, 0.82)
-	hit, next := EvaluatePriceWatch(w, bookAt(0.82, 0.83), nil)
+	hit, next := EvaluatePriceWatch(w, bookAt(0.82, 0.83))
 	if hit != nil {
 		t.Fatalf("1¢ move should be quiet: %+v", hit)
 	}
 
-	hit, next = EvaluatePriceWatch(next, bookAt(0.84, 0.85), nil)
+	hit, next = EvaluatePriceWatch(next, bookAt(0.84, 0.85))
 	if hit == nil {
 		t.Fatal("expected 84.5 ping")
 	}
@@ -71,11 +71,11 @@ func TestPriceWatchMidpointStepsThenReanchors(t *testing.T) {
 		t.Fatalf("old ping format leaked:\n%s", text)
 	}
 
-	hit, next = EvaluatePriceWatch(next, bookAt(0.84, 0.85), nil)
+	hit, next = EvaluatePriceWatch(next, bookAt(0.84, 0.85))
 	if hit != nil {
 		t.Fatal("same price should not ping again")
 	}
-	hit, _ = EvaluatePriceWatch(next, bookAt(0.87, 0.88), nil)
+	hit, _ = EvaluatePriceWatch(next, bookAt(0.87, 0.88))
 	if hit == nil || math.Abs(hit.To-0.875) > 1e-9 || math.Abs(hit.From-0.845) > 1e-9 {
 		t.Fatalf("next step %+v", hit)
 	}
@@ -83,7 +83,7 @@ func TestPriceWatchMidpointStepsThenReanchors(t *testing.T) {
 
 func TestPriceWatchDownMove(t *testing.T) {
 	w := armedWatch(0.81, 0.82)
-	hit, _ := EvaluatePriceWatch(w, bookAt(0.78, 0.79), nil)
+	hit, _ := EvaluatePriceWatch(w, bookAt(0.78, 0.79))
 	if hit == nil || math.Abs(hit.To-0.785) > 1e-9 {
 		t.Fatalf("%+v", hit)
 	}
@@ -96,54 +96,57 @@ func TestPriceWatchDownMove(t *testing.T) {
 	}
 }
 
-func TestPriceWatchBidOrFillWithoutMidMove(t *testing.T) {
+func TestPriceWatchSpreadOrPrintWithoutMidMove(t *testing.T) {
 	w := armedWatch(0.81, 0.82)
-	// Ask walks to the +3¢ band. Mid only moves 1.75¢, so the ask is the anchor.
-	hit, next := EvaluatePriceWatch(w, bookAt(0.81, 0.845), nil)
-	if hit == nil || math.Abs(hit.To-0.845) > 1e-9 {
-		t.Fatalf("ask %+v", hit)
+	// Ask walks to the +3¢ band. Mid only moves 1.75¢, so the price has not.
+	hit, next := EvaluatePriceWatch(w, bookAt(0.81, 0.845))
+	if hit != nil {
+		t.Fatalf("ask widen should stay quiet: %+v", hit)
 	}
-	text := PriceWatchPingText(*hit)
-	if !strings.HasPrefix(text, "Merz December\n") || !strings.Contains(text, "85¢") {
-		t.Fatalf("%s", text)
+	if math.Abs(next.Anchor-0.815) > 1e-9 {
+		t.Fatalf("anchor %v", next.Anchor)
+	}
+	hit, _ = EvaluatePriceWatch(next, bookAt(0.81, 0.82))
+	if hit != nil {
+		t.Fatal("spread returning to the same book should stay quiet")
 	}
 
+	// A one-sided quote at the band is the price when the other side is gone.
 	w = armedWatch(0.81, 0.82)
-	hit, next = EvaluatePriceWatch(w, bookAt(0.81, 0.82), []WatchFill{{
-		Key: "f1", Price: 0.785, Size: 1200, Side: "SELL", Timestamp: 1001,
-	}})
-	if hit == nil || math.Abs(hit.To-0.785) > 1e-9 {
-		t.Fatalf("fill %+v", hit)
+	oneSided := bookAt(0.845, 0.99)
+	oneSided.Asks = nil
+	hit, next = EvaluatePriceWatch(w, oneSided)
+	if hit == nil || math.Abs(hit.To-0.845) > 1e-9 {
+		t.Fatalf("one-sided bid %+v", hit)
 	}
-	text = PriceWatchPingText(*hit)
-	if !strings.HasPrefix(text, "Merz December\n") || strings.Contains(text, "via fill") || strings.Contains(text, "SELL 1.2k") {
-		t.Fatalf("%s", text)
-	}
-	// Old midpoint is now a full 3¢ from the fill anchor, but it has not changed.
-	hit, next = EvaluatePriceWatch(next, bookAt(0.81, 0.82), []WatchFill{{
-		Key: "f1", Price: 0.785, Size: 1200, Side: "SELL", Timestamp: 1001,
-	}})
+	hit, _ = EvaluatePriceWatch(next, oneSided)
 	if hit != nil {
-		t.Fatal("latched mid / seen fill should stay quiet")
-	}
-	// A mid tick that is still a full 3¢ outside the fill anchor stays quiet.
-	hit, _ = EvaluatePriceWatch(next, bookAt(0.80, 0.84), nil)
-	if hit != nil {
-		t.Fatalf("latched mid twitch %+v", hit)
+		t.Fatal("same one-sided bid should not ping again")
 	}
 }
 
-func TestPriceWatchOvershootAnchorsOnPrint(t *testing.T) {
-	w := armedWatch(0.81, 0.82)
-	hit, next := EvaluatePriceWatch(w, bookAt(0.84, 0.85), []WatchFill{{
-		Key: "gap", Price: 0.90, Size: 10, Side: "BUY", Timestamp: 1002,
-	}})
-	if hit == nil || math.Abs(hit.To-0.90) > 1e-9 {
-		t.Fatalf("want fill past mid, got %+v", hit)
+func TestPriceWatchRepeatedBookAfterGap(t *testing.T) {
+	w := armedWatch(0.70, 0.93) // mid 0.815; both sides already outside a 3¢ band
+	empty := polymarket.OutcomeBook{Outcome: "No", Tick: 0.01}
+	for i := 0; i < 4; i++ {
+		hit, next := EvaluatePriceWatch(w, empty)
+		if hit != nil {
+			t.Fatalf("empty book ping %d: %+v", i, hit)
+		}
+		w = next
+		hit, next = EvaluatePriceWatch(w, bookAt(0.70, 0.93))
+		if hit != nil {
+			t.Fatalf("unchanged book after gap %d: %+v", i, hit)
+		}
+		w = next
 	}
-	hit, _ = EvaluatePriceWatch(next, bookAt(0.84, 0.85), nil)
+	hit, next := EvaluatePriceWatch(w, bookAt(0.84, 0.85))
+	if hit == nil || math.Abs(hit.To-0.845) > 1e-9 {
+		t.Fatalf("move across a gap %+v", hit)
+	}
+	hit, _ = EvaluatePriceWatch(next, bookAt(0.84, 0.85))
 	if hit != nil {
-		t.Fatal("mid already outside the new anchor should not echo")
+		t.Fatal("same price after the move")
 	}
 }
 
@@ -152,26 +155,51 @@ func TestPriceWatchWideQuoteStaysLatched(t *testing.T) {
 	if !w.AskLatched || !w.BidLatched {
 		t.Fatalf("latches bid=%v ask=%v", w.BidLatched, w.AskLatched)
 	}
-	hit, next := EvaluatePriceWatch(w, bookAt(0.70, 0.94), nil)
+	hit, next := EvaluatePriceWatch(w, bookAt(0.70, 0.94))
 	if hit != nil {
 		t.Fatal("twitch of an already-far ask")
 	}
-	hit, _ = EvaluatePriceWatch(next, bookAt(0.80, 0.83), nil)
+	hit, _ = EvaluatePriceWatch(next, bookAt(0.80, 0.83))
 	if hit != nil {
 		t.Fatalf("returning inside is not a ping: %+v", hit)
 	}
 }
 
-func TestPriceWatchIgnoresSmallFill(t *testing.T) {
+func TestPriceWatchUnchangedBookStaysQuiet(t *testing.T) {
 	w := armedWatch(0.81, 0.82)
-	hit, next := EvaluatePriceWatch(w, bookAt(0.81, 0.82), []WatchFill{{
-		Key: "dust", Price: 0.82, Size: 5000, Side: "BUY", Timestamp: 1005,
-	}})
+	w.Anchor = 0.785 // previous print pulled the anchor off a book that never moved
+	hit, next := EvaluatePriceWatch(w, bookAt(0.81, 0.82))
 	if hit != nil {
-		t.Fatal("fill inside the band")
+		t.Fatalf("same book %+v", hit)
 	}
-	if next.TradeUnix != 1005 {
-		t.Fatalf("watermark %d", next.TradeUnix)
+	empty := polymarket.OutcomeBook{Outcome: "No", Tick: 0.01}
+	hit, next = EvaluatePriceWatch(next, empty)
+	if hit != nil {
+		t.Fatal("empty book")
+	}
+	hit, _ = EvaluatePriceWatch(next, bookAt(0.81, 0.82))
+	if hit != nil {
+		t.Fatalf("reprint after a gap %+v", hit)
+	}
+}
+
+func TestPriceWatchOneSidedThenMidReturns(t *testing.T) {
+	w := armedWatch(0.81, 0.82)
+	spike := bookAt(0.90, 0.99)
+	spike.Asks = nil
+	hit, next := EvaluatePriceWatch(w, spike)
+	if hit == nil || math.Abs(hit.To-0.90) > 1e-9 {
+		t.Fatalf("one-sided spike %+v", hit)
+	}
+	// Back to the original two-sided book: the midpoint moved by more than 3¢
+	// from the spike, so this is a real move, not a repeat of the old book.
+	hit, next = EvaluatePriceWatch(next, bookAt(0.81, 0.82))
+	if hit == nil || math.Abs(hit.To-0.815) > 1e-9 {
+		t.Fatalf("return %+v", hit)
+	}
+	hit, _ = EvaluatePriceWatch(next, bookAt(0.81, 0.82))
+	if hit != nil {
+		t.Fatal("settled book should stay quiet")
 	}
 }
 
@@ -201,33 +229,21 @@ func TestUpsertAndRemovePriceWatch(t *testing.T) {
 }
 
 type fakeWatchAPI struct {
-	book    polymarket.OutcomeBook
-	trades  []polymarket.Trade
-	bookErr error
+	book polymarket.OutcomeBook
 }
 
 func (f *fakeWatchAPI) FetchOutcomeBook(context.Context, string, string) (polymarket.OutcomeBook, error) {
-	return f.book, f.bookErr
+	return f.book, nil
 }
 
-func (f *fakeWatchAPI) FetchTrades(context.Context, polymarket.FetchTradesOptions) ([]polymarket.Trade, bool, error) {
-	return f.trades, false, nil
-}
-
-func TestCheckPriceWatchesFiltersOutcome(t *testing.T) {
+func TestCheckPriceWatches(t *testing.T) {
 	w := armedWatch(0.81, 0.82)
-	api := &fakeWatchAPI{
-		book: bookAt(0.81, 0.82),
-		trades: []polymarket.Trade{
-			{Outcome: "Yes", Price: 0.10, Size: 5, Timestamp: 1001, TransactionHash: "y"},
-			{Outcome: "No", Price: 0.86, Size: 40, Side: "BUY", Timestamp: 1002, TransactionHash: "n"},
-		},
-	}
+	api := &fakeWatchAPI{book: bookAt(0.84, 0.85)}
 	fired, next := CheckPriceWatches(context.Background(), api, []PriceWatch{w}, time.Unix(1003, 0))
-	if len(fired) != 1 || math.Abs(fired[0].To-0.86) > 1e-9 {
+	if len(fired) != 1 || math.Abs(fired[0].To-0.845) > 1e-9 {
 		t.Fatalf("%+v", fired)
 	}
-	if len(next) != 1 || math.Abs(next[0].Anchor-0.86) > 1e-9 {
+	if len(next) != 1 || math.Abs(next[0].Anchor-0.845) > 1e-9 {
 		t.Fatalf("anchor %+v", next)
 	}
 	s := &State{PriceWatches: next}
