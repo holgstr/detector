@@ -11,7 +11,7 @@
 // Same-market same-direction fills are aggregated first, then the floor applies.
 // /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
-// /port <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name).
+// /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size
@@ -641,6 +641,7 @@ func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client,
 		return
 	}
 	rep, err := alert.FetchPortReport(ctx, api, w)
+	rep.Limit = cmd.Limit
 	if err != nil && len(rep.Holdings) == 0 {
 		if sendErr := tg.SendMessage(ctx, chatID, fmt.Sprintf("Couldn't load positions: %v", err)); sendErr != nil {
 			log.Printf("reply: %v", sendErr)
@@ -656,7 +657,11 @@ func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client,
 			log.Printf("reply: %v", err)
 		}
 	}
-	log.Printf("port trader=%s markets=%d", w.Name, len(rep.Holdings))
+	shown := len(rep.Holdings)
+	if cmd.Limit > 0 && shown > cmd.Limit {
+		shown = cmd.Limit
+	}
+	log.Printf("port trader=%s markets=%d shown=%d", w.Name, len(rep.Holdings), shown)
 }
 
 func replyLastTrades(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {

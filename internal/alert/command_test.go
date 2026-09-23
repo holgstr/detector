@@ -77,16 +77,28 @@ func TestParseCommand(t *testing.T) {
 	}
 
 	got = ParseCommand("/port Flip")
-	if got.Cmd != CmdPort || got.Trader != "Flip" {
+	if got.Cmd != CmdPort || got.Trader != "Flip" || got.Limit != 0 {
 		t.Fatalf("port %+v", got)
 	}
 	got = ParseCommand("/portfolio@detectx_bot Flipadelphia")
-	if got.Cmd != CmdPort || got.Trader != "Flipadelphia" {
+	if got.Cmd != CmdPort || got.Trader != "Flipadelphia" || got.Limit != 0 {
 		t.Fatalf("port mention %+v", got)
 	}
 	got = ParseCommand("/port")
-	if got.Cmd != CmdPort || got.Trader != "" {
+	if got.Cmd != CmdPort || got.Trader != "" || got.Limit != 0 {
 		t.Fatalf("port empty %+v", got)
+	}
+	got = ParseCommand("/port 5 Flip")
+	if got.Cmd != CmdPort || got.Trader != "Flip" || got.Limit != 5 {
+		t.Fatalf("port top n %+v", got)
+	}
+	got = ParseCommand("/port 12 Flipadelphia extra")
+	if got.Cmd != CmdPort || got.Trader != "Flipadelphia extra" || got.Limit != 12 {
+		t.Fatalf("port top n name %+v", got)
+	}
+	got = ParseCommand("/port 5")
+	if got.Cmd != CmdPort || got.Trader != "" || got.Limit != 5 {
+		t.Fatalf("port n only %+v", got)
 	}
 
 	if ParseCommand("/update").Cmd != CmdUpdate {

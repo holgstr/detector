@@ -144,6 +144,25 @@ func TestFormatPortReport(t *testing.T) {
 	if len(empty) != 1 || !strings.Contains(empty[0], "No open non-sports holdings of $100+") {
 		t.Fatalf("%v", empty)
 	}
+
+	top := FormatPortReport(PortReport{
+		Name:  "Alice",
+		Limit: 2,
+		Holdings: []PortHolding{
+			{Title: "Market A", Size: 8600, Outcome: "YES", CurPrice: 0.64, AvgPrice: 0.61, HasCur: true, HasAvg: true},
+			{Title: "Market B", Size: 3400, Outcome: "NO", CurPrice: 0.20, AvgPrice: 0.21, HasCur: true, HasAvg: true},
+			{Title: "Market C", Size: 200, Outcome: "YES", AvgPrice: 0.40, HasAvg: true},
+		},
+	})
+	if len(top) != 1 {
+		t.Fatalf("top chunks=%d", len(top))
+	}
+	if !strings.Contains(top[0], "(top 2 of 3 by market value)") {
+		t.Fatalf("top note: %s", top[0])
+	}
+	if !strings.Contains(top[0], "Market A") || !strings.Contains(top[0], "Market B") || strings.Contains(top[0], "Market C") {
+		t.Fatalf("top rows: %s", top[0])
+	}
 }
 
 type fakePortAPI struct {

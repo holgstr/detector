@@ -33,15 +33,17 @@ type PortHolding struct {
 }
 
 // PortReport is /port output: one trader's open non-sports nets.
+// Limit, when positive, keeps only that many holdings after the market-value sort.
 type PortReport struct {
 	Name      string
 	Wallet    string
 	Holdings  []PortHolding
 	Truncated bool
+	Limit     int
 }
 
 // PortUsage is the reply when /port has no trader (or "all").
-const PortUsage = "Usage: /port <trader> — open non-sports nets of $100+, shares sorted by market value."
+const PortUsage = "Usage: /port [N] <trader> — open non-sports nets of $100+, shares sorted by market value. N keeps the top N."
 
 // ResolvePortWallet requires exactly one trader (tracked or a Polymarket name/wallet).
 func ResolvePortWallet(ctx context.Context, api userLookup, query string) (sharps.Wallet, string) {
@@ -400,12 +402,17 @@ func FormatPortReport(r PortReport) []string {
 	if r.Truncated {
 		head += "\n(Position book truncated — some small holdings may be missing.)"
 	}
-	if len(r.Holdings) == 0 {
+	holdings := r.Holdings
+	if r.Limit > 0 && len(holdings) > r.Limit {
+		head += fmt.Sprintf("\n(top %d of %d by market value)", r.Limit, len(holdings))
+		holdings = holdings[:r.Limit]
+	}
+	if len(holdings) == 0 {
 		return []string{head + "\nNo open non-sports holdings of $100+."}
 	}
 
 	var blocks []string
-	for _, h := range r.Holdings {
+	for _, h := range holdings {
 		title := strings.TrimSpace(h.Title)
 		if title == "" {
 			title = h.Slug
