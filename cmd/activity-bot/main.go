@@ -19,6 +19,7 @@
 // (keyword queries pick large tracked exposure, else the most traded live market).
 // /obp <market> prints the same ladder from Pascal (an event name shows every outcome).
 // /obk <market> prints that ladder from Kalshi (an event name shows every outcome).
+// After one of those names a market, the other two with no market reuse that name.
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // Each ping shows the market name and the same inside ladder as /ob.
@@ -339,6 +340,7 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 
 	cmd := alert.ParseCommand(u.Message.Text)
+	cmd = b.applyOBStick(cmd)
 	min := b.state.EffectiveMinUSD(b.fallbackMin)
 	if cmd.Cmd == alert.CmdMinSizeSet {
 		b.state.SetMinUSD(cmd.MinUSD)
@@ -416,6 +418,60 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdUpdate {
 		replyUpdate(ctx, tg, chatID)
+	}
+}
+
+// applyOBStick remembers a named /ob, /obp, or /obk query. A later call of either
+// of the other two with no market reuses that query. The same command with no
+// market still asks for one.
+func (b *bot) applyOBStick(cmd alert.ParsedCommand) alert.ParsedCommand {
+	next, query, which := stickOrderBookMarket(cmd, b.state.LastOBQuery, obCommand(b.state.LastOBCmd))
+	b.state.LastOBQuery = query
+	b.state.LastOBCmd = obCommandName(which)
+	return next
+}
+
+// stickOrderBookMarket fills an empty market on /ob, /obp, or /obk from the last
+// named query when this command is one of the other two. A named call replaces
+// that memory. Inherited calls leave it in place.
+func stickOrderBookMarket(cmd alert.ParsedCommand, lastQuery string, lastCmd alert.Command) (alert.ParsedCommand, string, alert.Command) {
+	if cmd.Cmd != alert.CmdOB && cmd.Cmd != alert.CmdOBP && cmd.Cmd != alert.CmdOBK {
+		return cmd, lastQuery, lastCmd
+	}
+	query := strings.TrimSpace(cmd.Market)
+	if query == "" {
+		if strings.TrimSpace(lastQuery) != "" && lastCmd != alert.CmdNone && cmd.Cmd != lastCmd {
+			cmd.Market = strings.TrimSpace(lastQuery)
+		}
+		return cmd, lastQuery, lastCmd
+	}
+	cmd.Market = query
+	return cmd, query, cmd.Cmd
+}
+
+func obCommandName(c alert.Command) string {
+	switch c {
+	case alert.CmdOB:
+		return "ob"
+	case alert.CmdOBP:
+		return "obp"
+	case alert.CmdOBK:
+		return "obk"
+	default:
+		return ""
+	}
+}
+
+func obCommand(name string) alert.Command {
+	switch name {
+	case "ob":
+		return alert.CmdOB
+	case "obp":
+		return alert.CmdOBP
+	case "obk":
+		return alert.CmdOBK
+	default:
+		return alert.CmdNone
 	}
 }
 
