@@ -43,6 +43,11 @@ type State struct {
 	PriceAlerts []PriceAlert `json:"price_alerts,omitempty"`
 	// PriceWatches ping when a Yes or No price moves by a set number of cents.
 	PriceWatches []PriceWatch `json:"price_watches,omitempty"`
+	// LastOBQuery is the market text from the latest /ob, /obp, or /obk that named one.
+	// A later bare call of either of the other two reuses it.
+	LastOBQuery string `json:"last_ob_query,omitempty"`
+	// LastOBCmd is "ob", "obp", or "obk" for that named call.
+	LastOBCmd string `json:"last_ob_cmd,omitempty"`
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.
