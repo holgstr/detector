@@ -16,7 +16,7 @@ func TestClosestTicksFromInside(t *testing.T) {
 		{Price: 0.038, Size: 25},
 	}
 	got := ClosestTicks(levels, 0.001, 4, true)
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("len=%d %+v", len(got), got)
 	}
 	if mathAbs(got[0].Price-0.041) > 1e-9 || got[0].Size != 480 {
@@ -28,14 +28,19 @@ func TestClosestTicksFromInside(t *testing.T) {
 	if mathAbs(got[2].Price-0.038) > 1e-9 || got[2].Size != 25 {
 		t.Fatalf("skip empty 0.039: %+v", got[2])
 	}
+	if mathAbs(got[3].Price-0.001) > 1e-9 || got[3].Size != 100 {
+		t.Fatalf("past the empty gap: %+v", got[3])
+	}
 
 	asks := []BookLevel{
 		{Price: 0.999, Size: 1},
 		{Price: 0.042, Size: 1118},
 		{Price: 0.044, Size: 50},
+		{Price: 0.050, Size: 7},
+		{Price: 0.080, Size: 9},
 	}
 	got = ClosestTicks(asks, 0.001, 4, false)
-	if len(got) != 2 {
+	if len(got) != 4 {
 		t.Fatalf("asks len=%d %+v", len(got), got)
 	}
 	if mathAbs(got[0].Price-0.042) > 1e-9 || got[0].Size != 1118 {
@@ -43,6 +48,12 @@ func TestClosestTicksFromInside(t *testing.T) {
 	}
 	if mathAbs(got[1].Price-0.044) > 1e-9 || got[1].Size != 50 {
 		t.Fatalf("skip empty 0.043: %+v", got[1])
+	}
+	if mathAbs(got[2].Price-0.050) > 1e-9 || got[2].Size != 7 {
+		t.Fatalf("3rd %+v", got[2])
+	}
+	if mathAbs(got[3].Price-0.080) > 1e-9 || got[3].Size != 9 {
+		t.Fatalf("4th, not the farther 0.999: %+v", got[3])
 	}
 }
 
