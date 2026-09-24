@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -251,9 +252,9 @@ func levelsFromClob(in []clobLevel) []BookLevel {
 	return out
 }
 
-// ClosestTicks returns up to n ticks with size from the inside of the book.
-// Empty price levels are skipped. bids=true walks down from the best bid;
-// otherwise walks up from the best ask, staying within n ticks of the inside.
+// ClosestTicks returns up to n closest ticks that have size.
+// Empty prices between those ticks are skipped. bids=true walks down from
+// the best bid; otherwise it walks up from the best ask.
 func ClosestTicks(levels []BookLevel, tick float64, n int, bids bool) []BookLevel {
 	if n <= 0 {
 		return nil
@@ -262,8 +263,6 @@ func ClosestTicks(levels []BookLevel, tick float64, n int, bids bool) []BookLeve
 		tick = 0.01
 	}
 	sizes := make(map[int64]float64, len(levels))
-	var inside int64
-	have := false
 	for _, lv := range levels {
 		if lv.Price <= 0 || lv.Size <= 0 {
 			continue
@@ -272,40 +271,29 @@ func ClosestTicks(levels []BookLevel, tick float64, n int, bids bool) []BookLeve
 		if k <= 0 {
 			continue
 		}
-		sizes[k] += lv.Size
-		if !have {
-			inside, have = k, true
+		if float64(k)*tick >= 1 {
 			continue
 		}
-		if bids {
-			if k > inside {
-				inside = k
-			}
-		} else if k < inside {
-			inside = k
-		}
+		sizes[k] += lv.Size
 	}
-	if !have {
+	if len(sizes) == 0 {
 		return nil
 	}
-	out := make([]BookLevel, 0, n)
-	for i := 0; i < n; i++ {
-		var k int64
-		if bids {
-			k = inside - int64(i)
-		} else {
-			k = inside + int64(i)
-		}
-		if k <= 0 {
-			break
-		}
-		p := float64(k) * tick
-		if p >= 1 {
-			break
-		}
-		if sz := sizes[k]; sz > 0 {
-			out = append(out, BookLevel{Price: p, Size: sz})
-		}
+	keys := make([]int64, 0, len(sizes))
+	for k := range sizes {
+		keys = append(keys, k)
+	}
+	if bids {
+		sort.Slice(keys, func(i, j int) bool { return keys[i] > keys[j] })
+	} else {
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	}
+	if len(keys) > n {
+		keys = keys[:n]
+	}
+	out := make([]BookLevel, len(keys))
+	for i, k := range keys {
+		out[i] = BookLevel{Price: float64(k) * tick, Size: sizes[k]}
 	}
 	return out
 }
