@@ -211,18 +211,58 @@ func TestFormatNetReport(t *testing.T) {
 }
 
 func TestResolveNetWallets(t *testing.T) {
-	all, err := ResolveNetWallets("")
+	ctx := context.Background()
+	addr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	api := fakeUsers{
+		byName: map[string][]polymarket.UserProfile{
+			"newsharp": {{Address: addr, Name: "NewSharp"}},
+			"new":      {{Address: addr, Name: "NewSharp"}},
+			"twins": {
+				{Address: "0x1111111111111111111111111111111111111111", Name: "Twins"},
+				{Address: "0x2222222222222222222222222222222222222222", Name: "Twins"},
+			},
+		},
+		byAddr: map[string]polymarket.UserProfile{
+			addr: {Address: addr, Name: "NewSharp"},
+		},
+	}
+
+	all, err := ResolveNetWallets(ctx, api, "")
 	if err != "" || len(all) != len(sharps.Tracked) {
 		t.Fatalf("all %d err=%s", len(all), err)
 	}
-	one, err := ResolveNetWallets("Flip")
+	one, err := ResolveNetWallets(ctx, api, "Flip")
 	if err != "" || len(one) != 1 || one[0].Name != "Flipadelphia" {
 		t.Fatalf("%+v %s", one, err)
 	}
-	if _, err := ResolveNetWallets("w"); err == "" || !strings.Contains(err, "Several") {
+	if _, err := ResolveNetWallets(ctx, api, "w"); err == "" || !strings.Contains(err, "Several") {
 		t.Fatalf("ambiguous w: %q", err)
 	}
-	if _, err := ResolveNetWallets("no-such-trader"); err == "" {
-		t.Fatal("expected miss")
+	if _, err := ResolveNetWallets(ctx, api, "no-such-trader"); err == "" || !strings.Contains(err, "No tracked") {
+		t.Fatalf("expected miss: %q", err)
+	}
+
+	got, err := ResolveNetWallets(ctx, api, "NewSharp")
+	if err != "" || len(got) != 1 || got[0].Address != addr || got[0].Name != "NewSharp" {
+		t.Fatalf("exact name %+v %q", got, err)
+	}
+	if _, err := ResolveNetWallets(ctx, api, "New"); err == "" || !strings.Contains(err, "No tracked") {
+		t.Fatalf("prefix of untracked should miss: %q", err)
+	}
+	got, err = ResolveNetWallets(ctx, api, addr)
+	if err != "" || len(got) != 1 || got[0].Address != addr || got[0].Name != "NewSharp" {
+		t.Fatalf("wallet %+v %q", got, err)
+	}
+	got, err = ResolveNetWallets(ctx, nil, "https://polymarket.com/profile/"+addr)
+	if err != "" || len(got) != 1 || got[0].Address != addr {
+		t.Fatalf("profile url %+v %q", got, err)
+	}
+	trackedAddr := "0x448861155279dbf833d041b963e3ac854599e319"
+	got, err = ResolveNetWallets(ctx, api, "https://polymarket.com/profile/"+trackedAddr)
+	if err != "" || len(got) != 1 || got[0].Name != "Flipadelphia" {
+		t.Fatalf("tracked profile url %+v %q", got, err)
+	}
+	if _, err := ResolveNetWallets(ctx, api, "Twins"); err == "" || !strings.Contains(err, "Several users") {
+		t.Fatalf("ambiguous exact: %q", err)
 	}
 }
