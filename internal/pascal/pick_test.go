@@ -38,6 +38,30 @@ func TestPickMarketsOutcomeStaysNarrow(t *testing.T) {
 	}
 }
 
+func TestPickMarketsPrefersWinnerOverPollMargin(t *testing.T) {
+	hits := []Market{
+		{Symbol: "EMERSON_MISEN_26SEP21_ABOVE.1P5", EventCode: "EMERSON_MISEN_26SEP21_ABOVE", Event: "Emerson Michigan Senate poll margin", Name: "El-Sayed above 1.5 points", Volume24h: 488},
+		{Symbol: "MI_SEN_2026.DEM", EventCode: "MI_SEN_2026", Event: "Michigan Senate Winner", Name: "Democrats", Volume24h: 243},
+		{Symbol: "MI_SEN_2026.REP", EventCode: "MI_SEN_2026", Event: "Michigan Senate Winner", Name: "Republicans", Volume24h: 40},
+		{Symbol: "EMERSON_MISEN_26SEP21_ABOVE.0P5", EventCode: "EMERSON_MISEN_26SEP21_ABOVE", Event: "Emerson Michigan Senate poll margin", Name: "El-Sayed above 0.5 points"},
+	}
+	got, err := PickMarkets("michigan senate", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ExpandEvent || got.EventCode != "MI_SEN_2026" || len(got.Markets) != 2 {
+		t.Fatalf("%+v", got)
+	}
+
+	poll, err := PickMarkets("michigan senate poll", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !poll.ExpandEvent || poll.EventCode != "EMERSON_MISEN_26SEP21_ABOVE" || len(poll.Markets) != 2 {
+		t.Fatalf("%+v", poll)
+	}
+}
+
 func TestPickMarketsExactSymbol(t *testing.T) {
 	hits := []Market{
 		{Symbol: "FL_GOV_2026.REP", EventCode: "FL_GOV_2026", Event: "Florida Governor Winner", Name: "Republicans"},
