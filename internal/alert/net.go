@@ -49,26 +49,109 @@ type NetReport struct {
 	Traders   []TraderDelta
 }
 
-// ResolveNetWallets picks tracked wallets for /net [trader].
-// A unique prefix/substring match is enough (Flip → Flipadelphia).
+// ResolveNetWallets picks wallets for /net [trader].
+// A unique prefix/substring of a tracked name is enough (Flip → Flipadelphia).
+// An exact Polymarket name or wallet id is used even when that trader is not tracked.
 // Several matches at the same rank are listed instead of guessed.
-func ResolveNetWallets(query string) ([]sharps.Wallet, string) {
+func ResolveNetWallets(ctx context.Context, api userLookup, query string) ([]sharps.Wallet, string) {
 	q := strings.TrimSpace(query)
 	if q == "" || strings.EqualFold(q, "all") {
 		return sharps.Lookup(""), ""
 	}
 	hits := sharps.Lookup(q)
-	if len(hits) == 0 {
-		return nil, fmt.Sprintf("No tracked trader matching %q.", q)
-	}
 	if len(hits) > 1 {
-		names := make([]string, len(hits))
-		for i, w := range hits {
-			names[i] = w.Name
-		}
-		return nil, fmt.Sprintf("Several traders match %q: %s", q, strings.Join(names, ", "))
+		return nil, fmt.Sprintf("Several traders match %q: %s", q, joinWalletNames(hits))
 	}
-	return hits, ""
+	if len(hits) == 1 {
+		return hits, ""
+	}
+	if addr, ok := polymarket.ParseWalletAddress(q); ok {
+		if tracked := sharps.Lookup(addr); len(tracked) == 1 {
+			return tracked, ""
+		}
+		return []sharps.Wallet{walletFromAddress(ctx, api, addr)}, ""
+	}
+	w, errMsg := resolveExactUntracked(ctx, api, q)
+	if errMsg != "" {
+		return nil, errMsg
+	}
+	return []sharps.Wallet{w}, ""
+}
+
+// resolveExactUntracked accepts only a full Polymarket username, not a prefix.
+func resolveExactUntracked(ctx context.Context, api userLookup, query string) (sharps.Wallet, string) {
+	miss := fmt.Sprintf("No tracked trader matching %q.", query)
+	if api == nil {
+		return sharps.Wallet{}, miss
+	}
+	hits, err := api.SearchUsers(ctx, query)
+	if err != nil {
+		return sharps.Wallet{}, fmt.Sprintf("Couldn't look up %q: %v", query, err)
+	}
+	exact := exactUserMatches(query, hits)
+	if len(exact) == 0 {
+		return sharps.Wallet{}, miss
+	}
+	if len(exact) > 1 {
+		names := make([]string, len(exact))
+		for i, p := range exact {
+			n := strings.TrimSpace(p.Name)
+			if n == "" {
+				n = shortWallet(p.Address)
+			}
+			names[i] = n
+		}
+		return sharps.Wallet{}, fmt.Sprintf("Several users match %q: %s — use a wallet id.", query, strings.Join(names, ", "))
+	}
+	name := strings.TrimSpace(exact[0].Name)
+	if name == "" {
+		name = query
+	}
+	return sharps.Wallet{Address: exact[0].Address, Name: name}, ""
+}
+
+func exactUserMatches(query string, hits []polymarket.UserProfile) []polymarket.UserProfile {
+	q := strings.ToLower(strings.TrimSpace(query))
+	q = strings.Trim(q, "\"'`“”„")
+	if q == "" {
+		return nil
+	}
+	var exact []polymarket.UserProfile
+	seen := make(map[string]struct{})
+	for _, u := range hits {
+		addr := strings.ToLower(strings.TrimSpace(u.Address))
+		if addr == "" {
+			continue
+		}
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(u.Name))
+		if name != q && addr != q {
+			continue
+		}
+		seen[addr] = struct{}{}
+		exact = append(exact, polymarket.UserProfile{Address: addr, Name: strings.TrimSpace(u.Name)})
+	}
+	return exact
+}
+
+func walletFromAddress(ctx context.Context, api userLookup, addr string) sharps.Wallet {
+	if api == nil {
+		return sharps.Wallet{Address: addr, Name: shortWallet(addr)}
+	}
+	p, err := api.FetchProfile(ctx, addr)
+	if err != nil {
+		return sharps.Wallet{Address: addr, Name: shortWallet(addr)}
+	}
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = shortWallet(addr)
+	}
+	if p.Address != "" {
+		addr = strings.ToLower(strings.TrimSpace(p.Address))
+	}
+	return sharps.Wallet{Address: addr, Name: name}
 }
 
 // BuildNetReport sums BUY/SELL Yes−No per market in [since, now] and drops

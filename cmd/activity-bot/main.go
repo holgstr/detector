@@ -9,7 +9,8 @@
 // Optional: TELEGRAM_CHAT_ID if you already know it.
 // Chat: /minsize 100 — same floor as the Activity tab "Min size $".
 // Same-market same-direction fills are aggregated first, then the floor applies.
-// /net 6h Flip and /net Flip 6h are the same; short names match (Flip → Flipadelphia).
+// /net 6h Flip and /net Flip 6h are the same; short names match tracked wallets (Flip → Flipadelphia).
+// An exact Polymarket name or wallet works even when that trader is not tracked.
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /holders <market> lists the top 10 holders on each side (net if a wallet holds both), with acquisition price.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
@@ -666,7 +667,7 @@ func displayTrader(w sharps.Wallet) string {
 }
 
 func replyNet(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
-	wallets, errMsg := alert.ResolveNetWallets(cmd.Trader)
+	wallets, errMsg := alert.ResolveNetWallets(ctx, api, cmd.Trader)
 	if errMsg != "" {
 		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
 			log.Printf("reply: %v", err)
