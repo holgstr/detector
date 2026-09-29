@@ -257,6 +257,160 @@ func TestFindMarketRejectsResolvedSlug(t *testing.T) {
 	}
 }
 
+func TestPickBestMarketNameTypo(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market:         Market{ConditionID: "dem", Question: "Will the Democratic Party win the FL-25 House seat?", Slug: "will-the-democratic-party-win-the-fl-25-house-seat"},
+			GroupItemTitle: "Jared Moskowitz (D)",
+			EventTitle:     "FL-25 House Election Winner",
+			Volume24hr:     112,
+			Active:         true,
+		},
+		{
+			Market:         Market{ConditionID: "gop", Question: "Will the Republican Party win the FL-25 House seat?", Slug: "will-the-republican-party-win-the-fl-25-house-seat"},
+			GroupItemTitle: "Scott Singer (R)",
+			EventTitle:     "FL-25 House Election Winner",
+			Volume24hr:     40,
+			Active:         true,
+		},
+		{
+			Market:         Market{ConditionID: "margin", Question: "Will the Republican Party candidate win the 2026 FL-25 House election by 12% or more?", Slug: "fl-25-margin"},
+			GroupItemTitle: "Republican 12%+",
+			EventTitle:     "FL-25 House Election Margin of Victory",
+			Volume24hr:     9000,
+			Active:         true,
+		},
+	}
+	for _, q := range []string{"Moskowitz", "Mowkowitz"} {
+		got, ok := PickBestMarket(q, hits)
+		if !ok || got.Market.ConditionID != "dem" {
+			t.Fatalf("%s: got %+v ok=%v", q, got.Market.ConditionID, ok)
+		}
+	}
+}
+
+func TestSearchMarketsByOptionTitle(t *testing.T) {
+	var sawExecute bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/search/execute" {
+			sawExecute = true
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			params, _ := body["params"].(map[string]any)
+			if params["query"] != "Moskowitz" {
+				t.Fatalf("outcome query %#v", params["query"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{
+						"title":  "FL-25 Democratic Primary Winner",
+						"slug":   "fl-25-democratic-primary-winner",
+						"closed": true,
+						"markets": []map[string]any{{
+							"slug":           "jared-moskowitz-primary",
+							"question":       "Will Jared Moskowitz be the FL-25 Democratic nominee?",
+							"groupItemTitle": "Jared Moskowitz",
+							"outcomes":       []string{"Yes", "No"},
+							"active":         true,
+							"closed":         true,
+						}},
+					},
+					{
+						"title":      "FL-25 House Election Winner",
+						"slug":       "fl-25-house-election-winner",
+						"closed":     false,
+						"volume24hr": 122,
+						"markets": []map[string]any{
+							{
+								"slug":           "fl-25-gop",
+								"question":       "Will the Republican Party win the FL-25 House seat?",
+								"groupItemTitle": "Scott Singer (R)",
+								"outcomes":       []string{"Yes", "No"},
+								"active":         true,
+								"closed":         false,
+							},
+							{
+								"slug":           "fl-25-dem",
+								"question":       "Will the Democratic Party win the FL-25 House seat?",
+								"groupItemTitle": "Jared Moskowitz (D)",
+								"outcomes":       []string{"Yes", "No"},
+								"active":         true,
+								"closed":         false,
+							},
+						},
+					},
+				},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "public-search") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
+			return
+		}
+		if slug := r.URL.Query().Get("slug"); slug == "fl-25-dem" {
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"conditionId": "0xmoskowitz",
+				"slug":        "fl-25-dem",
+				"question":    "Will the Democratic Party win the FL-25 House seat?",
+				"outcomes":    `["Yes", "No"]`,
+				"active":      true,
+				"closed":      false,
+				"events":      []map[string]any{{"slug": "fl-25-house-election-winner"}},
+			}})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.String())
+		http.Error(w, "no", http.StatusNotFound)
+	}))
+	t.Cleanup(ts.Close)
+
+	c := NewClient()
+	c.HTTP = ts.Client()
+	c.HTTP.Transport = rewriteHost(ts.URL)
+
+	best, err := c.FindMarket(context.Background(), "Moskowitz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawExecute {
+		t.Fatal("expected outcome search")
+	}
+	if best.Market.ConditionID != "0xmoskowitz" || best.GroupItemTitle != "Jared Moskowitz (D)" {
+		t.Fatalf("got %s %q", best.Market.ConditionID, best.GroupItemTitle)
+	}
+	if best.EventTitle != "FL-25 House Election Winner" {
+		t.Fatalf("event %q", best.EventTitle)
+	}
+}
+
+func TestPickBestMarketNamedOutcome(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market: Market{
+				ConditionID: "match",
+				Question:    "M15 Fayetteville",
+				Outcomes:    []string{"Jared Horwood", "Volodymyr Gurenko"},
+			},
+			Active: true,
+		},
+		{
+			Market: Market{
+				ConditionID: "sets",
+				Question:    "Total sets",
+				Outcomes:    []string{"Over 2.5", "Under 2.5"},
+			},
+			Volume24hr: 9000,
+			Active:     true,
+		},
+	}
+	got, ok := PickBestMarket("Horwood", hits)
+	if !ok || got.Market.ConditionID != "match" {
+		t.Fatalf("got %+v ok=%v", got.Market.ConditionID, ok)
+	}
+}
+
 func TestLooksLikeSlug(t *testing.T) {
 	if looksLikeSlug("Andersson") {
 		t.Fatal("name is not a slug")
