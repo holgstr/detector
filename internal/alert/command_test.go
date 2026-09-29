@@ -225,6 +225,10 @@ func TestParseCommand(t *testing.T) {
 	if got.Cmd != CmdAlert || got.Market != "" {
 		t.Fatalf("alert list %+v", got)
 	}
+	got = ParseCommand("/alert 32 1000")
+	if got.Cmd != CmdAlert || got.Market != "" || got.Price != 0.32 || got.MinSize != 1000 {
+		t.Fatalf("alert price without market %+v", got)
+	}
 	got = ParseCommand("/unalert Andersson")
 	if got.Cmd != CmdUnalert || got.Market != "Andersson" {
 		t.Fatalf("unalert %+v", got)
@@ -251,6 +255,14 @@ func TestParseCommand(t *testing.T) {
 	}
 	if ParseCommand("/pricewatch Merz 3").Cmd != CmdHelp {
 		t.Fatal("pricewatch missing side → help")
+	}
+	got = ParseCommand("/pricewatch NO 3")
+	if got.Cmd != CmdPriceWatch || got.Market != "" || got.Outcome != "No" || got.Delta != 0.03 {
+		t.Fatalf("pricewatch side only %+v", got)
+	}
+	got = ParseCommand("/pricewatch 3c YES")
+	if got.Cmd != CmdPriceWatch || got.Market != "" || got.Outcome != "Yes" || got.Delta != 0.03 {
+		t.Fatalf("pricewatch swapped side only %+v", got)
 	}
 	got = ParseCommand("/unpricewatch Merz December NO")
 	if got.Cmd != CmdUnpriceWatch || got.Market != "Merz December NO" {

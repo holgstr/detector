@@ -28,64 +28,82 @@ func TestCommandRepliesHelp(t *testing.T) {
 	}
 }
 
-func TestStickOrderBookMarketReusesLastNamedOnTheOtherBooks(t *testing.T) {
-	var lastQ string
-	var lastC alert.Command
+func TestStickMarketReusesLastNamed(t *testing.T) {
+	var last string
 
-	cmd, lastQ, lastC := stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOB, Market: " Aliens "}, lastQ, lastC)
-	if cmd.Market != "Aliens" || lastQ != "Aliens" || lastC != alert.CmdOB {
-		t.Fatalf("named /ob: cmd=%q last=%q which=%d", cmd.Market, lastQ, lastC)
+	cmd, last := stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB, Market: " Aliens "}, last)
+	if cmd.Market != "Aliens" || last != "Aliens" {
+		t.Fatalf("named /ob: cmd=%q last=%q", cmd.Market, last)
+	}
+	for _, c := range []alert.Command{alert.CmdOBK, alert.CmdOBP, alert.CmdOB, alert.CmdPos, alert.CmdHolders} {
+		cmd, last = stickMarket(alert.ParsedCommand{Cmd: c}, last)
+		if cmd.Market != "Aliens" || last != "Aliens" {
+			t.Fatalf("bare %d: cmd=%q last=%q", c, cmd.Market, last)
+		}
 	}
 
-	cmd, lastQ, lastC = stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOBK}, lastQ, lastC)
-	if cmd.Market != "Aliens" || lastQ != "Aliens" || lastC != alert.CmdOB {
-		t.Fatalf("bare /obk: cmd=%q last=%q which=%d", cmd.Market, lastQ, lastC)
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPos, Market: "Mars"}, last)
+	if cmd.Market != "Mars" || last != "Mars" {
+		t.Fatalf("named /pos: cmd=%q last=%q", cmd.Market, last)
 	}
-
-	cmd, lastQ, lastC = stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOBP}, lastQ, lastC)
-	if cmd.Market != "Aliens" || lastQ != "Aliens" || lastC != alert.CmdOB {
-		t.Fatalf("bare /obp: cmd=%q last=%q which=%d", cmd.Market, lastQ, lastC)
-	}
-
-	cmd, lastQ, lastC = stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOB}, lastQ, lastC)
-	if cmd.Market != "" || lastC != alert.CmdOB {
-		t.Fatalf("bare /ob should still ask for a market: cmd=%q which=%d", cmd.Market, lastC)
-	}
-
-	cmd, lastQ, lastC = stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOBK, Market: "Mars"}, lastQ, lastC)
-	if cmd.Market != "Mars" || lastQ != "Mars" || lastC != alert.CmdOBK {
-		t.Fatalf("named /obk: cmd=%q last=%q which=%d", cmd.Market, lastQ, lastC)
-	}
-	cmd, lastQ, lastC = stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOB}, lastQ, lastC)
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB}, last)
 	if cmd.Market != "Mars" {
-		t.Fatalf("bare /ob after /obk Mars: %q", cmd.Market)
+		t.Fatalf("bare /ob after /pos: %q", cmd.Market)
 	}
 
-	cmd, _, _ = stickOrderBookMarket(alert.ParsedCommand{Cmd: alert.CmdOBP}, "", alert.CmdNone)
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdAlert, Price: 0.32, MinSize: 1000}, last)
+	if cmd.Market != "Mars" || last != "Mars" {
+		t.Fatalf("/alert price size: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPriceWatch, Outcome: "No", Delta: 0.03}, last)
+	if cmd.Market != "Mars" || last != "Mars" {
+		t.Fatalf("/pricewatch side: cmd=%q last=%q", cmd.Market, last)
+	}
+
+	bareAlert := alert.ParsedCommand{Cmd: alert.CmdAlert}
+	cmd, last = stickMarket(bareAlert, last)
+	if cmd.Market != "" || last != "Mars" {
+		t.Fatalf("bare /alert lists: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPriceWatch}, last)
+	if cmd.Market != "" || last != "Mars" {
+		t.Fatalf("bare /pricewatch lists: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdUnalert}, last)
+	if cmd.Market != "" || last != "Mars" {
+		t.Fatalf("bare /unalert: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdLastTrades}, last)
+	if cmd.Market != "" || last != "Mars" {
+		t.Fatalf("bare /lasttrades: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHelp}, last)
+	if last != "Mars" {
+		t.Fatalf("/help cleared memory: %q", last)
+	}
+	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHolders}, "")
 	if cmd.Market != "" {
 		t.Fatalf("no history: %q", cmd.Market)
 	}
-
-	other := alert.ParsedCommand{Cmd: alert.CmdPos, Market: "Aliens"}
-	got, q, which := stickOrderBookMarket(other, "Aliens", alert.CmdOB)
-	if got != other || q != "Aliens" || which != alert.CmdOB {
-		t.Fatalf("non-book command changed memory: %+v %q %d", got, q, which)
+	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHolders, Market: "Venus"}, "Mars")
+	if cmd.Market != "Venus" || last != "Venus" {
+		t.Fatalf("named /holders: cmd=%q last=%q", cmd.Market, last)
 	}
 }
 
-func TestApplyOBStickPersistsLastNamedMarket(t *testing.T) {
-	b := &bot{state: &alert.State{}}
-	cmd := b.applyOBStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"})
-	if cmd.Market != "Aliens" || b.state.LastOBQuery != "Aliens" || b.state.LastOBCmd != "ob" {
+func TestApplyMarketStickPersistsLastNamedMarket(t *testing.T) {
+	b := &bot{state: &alert.State{LastOBQuery: "OldBook"}}
+	cmd := b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdHolders})
+	if cmd.Market != "OldBook" || b.state.LastMarketQuery != "OldBook" {
+		t.Fatalf("legacy ob memory %+v cmd %+v", b.state, cmd)
+	}
+	cmd = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"})
+	if cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" || b.state.LastOBQuery != "Aliens" {
 		t.Fatalf("state %+v cmd %+v", b.state, cmd)
 	}
-	cmd = b.applyOBStick(alert.ParsedCommand{Cmd: alert.CmdOBP})
-	if cmd.Market != "Aliens" || b.state.LastOBCmd != "ob" {
+	cmd = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdPos})
+	if cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" {
 		t.Fatalf("inherit %+v cmd %+v", b.state, cmd)
-	}
-	cmd = b.applyOBStick(alert.ParsedCommand{Cmd: alert.CmdOBK})
-	if cmd.Market != "Aliens" || b.state.LastOBCmd != "ob" {
-		t.Fatalf("third %+v cmd %+v", b.state, cmd)
 	}
 }
 

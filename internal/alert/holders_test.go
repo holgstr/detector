@@ -133,6 +133,31 @@ func TestFormatHoldersReport(t *testing.T) {
 	}
 }
 
+func TestHolderLabelAbbreviatesBareWallets(t *testing.T) {
+	const addr = "0x23d81ba9371e576015c1e562db09c689f56b0288"
+	if got := holderLabel("", addr); got != "0x23d81..." {
+		t.Fatalf("empty name: %q", got)
+	}
+	if got := holderLabel(addr, addr); got != "0x23d81..." {
+		t.Fatalf("address name: %q", got)
+	}
+	if got := holderLabel("Flipadelphia", addr); got != "Flipadelphia" {
+		t.Fatalf("named: %q", got)
+	}
+	if got := holderLabel("", "0xaaa"); got != "0xaaa" {
+		t.Fatalf("short: %q", got)
+	}
+	chunks := FormatHoldersReport(HoldersReport{
+		Title: "Will it happen?",
+		Holdings: []PosHolding{
+			{Name: holderLabel(addr, addr), Size: 6400, Outcome: "YES", AvgPrice: 0.32, HasAvg: true, CurPrice: 0.64, HasCur: true},
+		},
+	})
+	if strings.Contains(chunks[0], addr) || !strings.Contains(chunks[0], "0x23d81...") {
+		t.Fatalf("got:\n%s", chunks[0])
+	}
+}
+
 type fakeHoldersAPI struct {
 	fakePosAPI
 	holders []polymarket.OutcomeHolder

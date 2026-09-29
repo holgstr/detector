@@ -43,11 +43,14 @@ type State struct {
 	PriceAlerts []PriceAlert `json:"price_alerts,omitempty"`
 	// PriceWatches ping when a Yes or No price moves by a set number of cents.
 	PriceWatches []PriceWatch `json:"price_watches,omitempty"`
-	// LastOBQuery is the market text from the latest /ob, /obp, or /obk that named one.
-	// A later bare call of either of the other two reuses it.
+	// LastOBQuery is the older order-book memory. New runs copy the last market
+	// here too; it is only read when LastMarketQuery is still empty.
 	LastOBQuery string `json:"last_ob_query,omitempty"`
-	// LastOBCmd is "ob", "obp", or "obk" for that named call.
+	// LastOBCmd is retained so older state files still decode. It is unused.
 	LastOBCmd string `json:"last_ob_cmd,omitempty"`
+	// LastMarketQuery is the market text from the latest command that named one.
+	// A later command that needs a market and omits it reuses this.
+	LastMarketQuery string `json:"last_market_query,omitempty"`
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.
