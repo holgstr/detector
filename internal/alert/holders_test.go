@@ -144,6 +144,13 @@ func TestHolderLabelAbbreviatesBareWallets(t *testing.T) {
 	if got := holderLabel("Flipadelphia", addr); got != "Flipadelphia" {
 		t.Fatalf("named: %q", got)
 	}
+	if got := holderLabel("0xrc", addr); got != "0xrc" {
+		t.Fatalf("short hex name: %q", got)
+	}
+	const suffixed = "0x4fc18862c662dd391BeEd8E4Df257bDaC04284a7-1770212261553"
+	if got := holderLabel(suffixed, "0x4fc18862c662dd391beed8e4df257bdac04284a7"); got != "0x4fc18..." {
+		t.Fatalf("address-timestamp name: %q", got)
+	}
 	if got := holderLabel("", "0xaaa"); got != "0xaaa" {
 		t.Fatalf("short: %q", got)
 	}
