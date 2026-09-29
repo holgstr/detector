@@ -289,108 +289,80 @@ func TestPickBestMarketNameTypo(t *testing.T) {
 	}
 }
 
-func TestCandidateFollowUps(t *testing.T) {
-	events := []publicSearchEvent{
-		{
-			Title: "Florida Democratic Senate Primary Winner",
-			Slug:  "florida-democratic-senate-primary-winner",
-			Markets: []publicSearchMarket{
-				{GroupItemTitle: "Jared Moskowitz", Question: "Will Jared Moskowitz be the Democratic nominee for Senate in Florida?"},
-			},
-		},
-		{
-			Title: "FL-25 Democratic Primary Winner",
-			Slug:  "fl-25-democratic-primary-winner",
-			Markets: []publicSearchMarket{
-				{GroupItemTitle: "Jared Moskowitz", Question: "Will Jared Moskowitz be the FL-25 Democratic nominee?"},
-			},
-		},
-		{
-			Title: "FL-23 Democratic Primary Winner",
-			Slug:  "fl-23-democratic-primary-winner",
-			Markets: []publicSearchMarket{
-				{GroupItemTitle: "Jared Moskowitz", Question: "Will Jared Moskowitz be the Democratic Nominee for FL-23?"},
-			},
-		},
-		{
-			Title: "M15 Darwin: Someone Else",
-			Slug:  "m15-darwin",
-			Markets: []publicSearchMarket{
-				{Question: "Someone Else vs Player"},
-			},
-		},
-	}
-	got := candidateFollowUps("Mowkowitz", events)
-	if len(got) != 2 || got[0] != "FL-25" || got[1] != "FL-23" {
-		t.Fatalf("follow-ups: %#v", got)
-	}
-	if nameLikeQuery(searchTokens("FL-25")) {
-		t.Fatal("district query is not a name")
-	}
-}
-
-func TestSearchMarketsCarriesCandidateToLiveRace(t *testing.T) {
-	var queries []string
+func TestSearchMarketsByOptionTitle(t *testing.T) {
+	var sawExecute bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query().Get("q")
-		queries = append(queries, q+" status="+r.URL.Query().Get("events_status"))
-		switch q {
-		case "Mowkowitz":
-			if r.URL.Query().Get("events_status") == "active" {
-				_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
-				return
+		if r.URL.Path == "/api/search/execute" {
+			sawExecute = true
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			params, _ := body["params"].(map[string]any)
+			if params["query"] != "Moskowitz" {
+				t.Fatalf("outcome query %#v", params["query"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"events": []map[string]any{{
-					"title":  "FL-25 Democratic Primary Winner",
-					"slug":   "fl-25-democratic-primary-winner",
-					"active": true,
-					"closed": true,
-					"markets": []map[string]any{{
-						"question":       "Will Jared Moskowitz be the FL-25 Democratic nominee?",
-						"conditionId":    "0xprimary",
-						"slug":           "jared-moskowitz-primary",
-						"groupItemTitle": "Jared Moskowitz",
-						"active":         true,
-						"closed":         true,
-					}},
-				}},
-			})
-		case "FL-25":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"events": []map[string]any{{
-					"title":  "FL-25 House Election Winner",
-					"slug":   "fl-25-house-election-winner",
-					"active": true,
-					"closed": false,
-					"markets": []map[string]any{
-						{
-							"question":       "Will the Republican Party win the FL-25 House seat?",
-							"conditionId":    "0xgop",
-							"slug":           "fl-25-gop",
-							"groupItemTitle": "Scott Singer (R)",
-							"outcomes":       `["Yes", "No"]`,
+				"results": []map[string]any{
+					{
+						"title":  "FL-25 Democratic Primary Winner",
+						"slug":   "fl-25-democratic-primary-winner",
+						"closed": true,
+						"markets": []map[string]any{{
+							"slug":           "jared-moskowitz-primary",
+							"question":       "Will Jared Moskowitz be the FL-25 Democratic nominee?",
+							"groupItemTitle": "Jared Moskowitz",
+							"outcomes":       []string{"Yes", "No"},
 							"active":         true,
-							"closed":         false,
-							"volume24hr":     40,
-						},
-						{
-							"question":       "Will the Democratic Party win the FL-25 House seat?",
-							"conditionId":    "0xmoskowitz",
-							"slug":           "fl-25-dem",
-							"groupItemTitle": "Jared Moskowitz (D)",
-							"outcomes":       `["Yes", "No"]`,
-							"active":         true,
-							"closed":         false,
-							"volume24hr":     112,
+							"closed":         true,
+						}},
+					},
+					{
+						"title":      "FL-25 House Election Winner",
+						"slug":       "fl-25-house-election-winner",
+						"closed":     false,
+						"volume24hr": 122,
+						"markets": []map[string]any{
+							{
+								"slug":           "fl-25-gop",
+								"question":       "Will the Republican Party win the FL-25 House seat?",
+								"groupItemTitle": "Scott Singer (R)",
+								"outcomes":       []string{"Yes", "No"},
+								"active":         true,
+								"closed":         false,
+							},
+							{
+								"slug":           "fl-25-dem",
+								"question":       "Will the Democratic Party win the FL-25 House seat?",
+								"groupItemTitle": "Jared Moskowitz (D)",
+								"outcomes":       []string{"Yes", "No"},
+								"active":         true,
+								"closed":         false,
+							},
 						},
 					},
-				}},
+				},
 			})
-		default:
-			t.Errorf("unexpected q=%s", q)
-			_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
+			return
 		}
+		if strings.Contains(r.URL.Path, "public-search") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
+			return
+		}
+		if slug := r.URL.Query().Get("slug"); slug == "fl-25-dem" {
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"conditionId": "0xmoskowitz",
+				"slug":        "fl-25-dem",
+				"question":    "Will the Democratic Party win the FL-25 House seat?",
+				"outcomes":    `["Yes", "No"]`,
+				"active":      true,
+				"closed":      false,
+				"events":      []map[string]any{{"slug": "fl-25-house-election-winner"}},
+			}})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.String())
+		http.Error(w, "no", http.StatusNotFound)
 	}))
 	t.Cleanup(ts.Close)
 
@@ -398,18 +370,44 @@ func TestSearchMarketsCarriesCandidateToLiveRace(t *testing.T) {
 	c.HTTP = ts.Client()
 	c.HTTP.Transport = rewriteHost(ts.URL)
 
-	best, err := c.FindMarket(context.Background(), "Mowkowitz")
+	best, err := c.FindMarket(context.Background(), "Moskowitz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if best.Market.ConditionID != "0xmoskowitz" {
+	if !sawExecute {
+		t.Fatal("expected outcome search")
+	}
+	if best.Market.ConditionID != "0xmoskowitz" || best.GroupItemTitle != "Jared Moskowitz (D)" {
 		t.Fatalf("got %s %q", best.Market.ConditionID, best.GroupItemTitle)
 	}
 	if best.EventTitle != "FL-25 House Election Winner" {
 		t.Fatalf("event %q", best.EventTitle)
 	}
-	if len(queries) != 3 {
-		t.Fatalf("requests: %#v", queries)
+}
+
+func TestPickBestMarketNamedOutcome(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market: Market{
+				ConditionID: "match",
+				Question:    "M15 Fayetteville",
+				Outcomes:    []string{"Jared Horwood", "Volodymyr Gurenko"},
+			},
+			Active: true,
+		},
+		{
+			Market: Market{
+				ConditionID: "sets",
+				Question:    "Total sets",
+				Outcomes:    []string{"Over 2.5", "Under 2.5"},
+			},
+			Volume24hr: 9000,
+			Active:     true,
+		},
+	}
+	got, ok := PickBestMarket("Horwood", hits)
+	if !ok || got.Market.ConditionID != "match" {
+		t.Fatalf("got %+v ok=%v", got.Market.ConditionID, ok)
 	}
 }
 
