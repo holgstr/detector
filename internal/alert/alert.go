@@ -48,6 +48,9 @@ type State struct {
 	LastOBQuery string `json:"last_ob_query,omitempty"`
 	// LastOBCmd is "ob", "obp", or "obk" for that named call.
 	LastOBCmd string `json:"last_ob_cmd,omitempty"`
+	// LastMarketQuery is the market text from the latest command that named one.
+	// A later /holders with no market reuses it.
+	LastMarketQuery string `json:"last_market_query,omitempty"`
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.

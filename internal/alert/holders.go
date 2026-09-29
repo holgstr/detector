@@ -13,6 +13,8 @@ import (
 const (
 	holdersPerSide     = 10
 	holdersLookupLimit = 20 // data-api /holders cap; extras cover nets that drop a wallet off one side
+	// walletLabelRunes is how much of an unnamed 0x address to show before "...".
+	walletLabelRunes = 7
 )
 
 type holderLookup interface {
@@ -137,10 +139,43 @@ func holderRowsAsPositions(rows []polymarket.OutcomeHolder) []polymarket.Positio
 
 func holderLabel(name, wallet string) string {
 	name = strings.TrimSpace(name)
-	if name != "" {
+	wallet = strings.TrimSpace(wallet)
+	if name != "" && !isBareWallet(name) {
 		return name
 	}
-	return shortWallet(wallet)
+	addr := wallet
+	if isBareWallet(name) {
+		addr = name
+	}
+	return abbreviateWallet(addr)
+}
+
+// isBareWallet reports a display string that is a 0x address rather than a name.
+func isBareWallet(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) <= walletLabelRunes || !strings.HasPrefix(strings.ToLower(s), "0x") {
+		return false
+	}
+	for _, r := range s[2:] {
+		if !isHexRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHexRune(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+// abbreviateWallet keeps the first walletLabelRunes of an address and adds "...".
+func abbreviateWallet(addr string) string {
+	addr = strings.TrimSpace(addr)
+	r := []rune(addr)
+	if len(r) <= walletLabelRunes {
+		return addr
+	}
+	return string(r[:walletLabelRunes]) + "..."
 }
 
 func marketTitle(market polymarket.SearchMarket) string {

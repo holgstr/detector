@@ -75,17 +75,52 @@ func TestStickOrderBookMarketReusesLastNamedOnTheOtherBooks(t *testing.T) {
 
 func TestApplyOBStickPersistsLastNamedMarket(t *testing.T) {
 	b := &bot{state: &alert.State{}}
-	cmd := b.applyOBStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"})
-	if cmd.Market != "Aliens" || b.state.LastOBQuery != "Aliens" || b.state.LastOBCmd != "ob" {
+	cmd := b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"})
+	if cmd.Market != "Aliens" || b.state.LastOBQuery != "Aliens" || b.state.LastOBCmd != "ob" || b.state.LastMarketQuery != "Aliens" {
 		t.Fatalf("state %+v cmd %+v", b.state, cmd)
 	}
-	cmd = b.applyOBStick(alert.ParsedCommand{Cmd: alert.CmdOBP})
+	cmd = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOBP})
 	if cmd.Market != "Aliens" || b.state.LastOBCmd != "ob" {
 		t.Fatalf("inherit %+v cmd %+v", b.state, cmd)
 	}
-	cmd = b.applyOBStick(alert.ParsedCommand{Cmd: alert.CmdOBK})
+	cmd = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOBK})
 	if cmd.Market != "Aliens" || b.state.LastOBCmd != "ob" {
 		t.Fatalf("third %+v cmd %+v", b.state, cmd)
+	}
+}
+
+func TestStickHoldersMarketReusesPreviousCommand(t *testing.T) {
+	var last string
+
+	cmd, last := stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdOB, Market: " Aliens "}, last)
+	if cmd.Market != "Aliens" || last != "Aliens" {
+		t.Fatalf("named /ob: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdHolders}, last)
+	if cmd.Market != "Aliens" || last != "Aliens" {
+		t.Fatalf("bare /holders: cmd=%q last=%q", cmd.Market, last)
+	}
+
+	cmd, last = stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdPos, Market: "Mars"}, last)
+	if cmd.Market != "Mars" || last != "Mars" {
+		t.Fatalf("named /pos: cmd=%q last=%q", cmd.Market, last)
+	}
+	cmd, last = stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdHolders}, last)
+	if cmd.Market != "Mars" {
+		t.Fatalf("bare /holders after /pos: %q", cmd.Market)
+	}
+
+	cmd, last = stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdHelp}, last)
+	if last != "Mars" {
+		t.Fatalf("/help cleared memory: %q", last)
+	}
+	cmd, _ = stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdHolders}, "")
+	if cmd.Market != "" {
+		t.Fatalf("no history: %q", cmd.Market)
+	}
+	cmd, last = stickHoldersMarket(alert.ParsedCommand{Cmd: alert.CmdHolders, Market: "Venus"}, "Mars")
+	if cmd.Market != "Venus" || last != "Venus" {
+		t.Fatalf("named /holders: cmd=%q last=%q", cmd.Market, last)
 	}
 }
 

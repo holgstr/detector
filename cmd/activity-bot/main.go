@@ -13,6 +13,7 @@
 // An exact Polymarket name or wallet works even when that trader is not tracked.
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /holders <market> lists the top 10 holders on each side (net if a wallet holds both), with acquisition price.
+// With no market, /holders reuses the market the previous command named.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
@@ -21,6 +22,7 @@
 // /obp <market> prints the same ladder from Pascal (an event name shows every outcome).
 // /obk <market> prints that ladder from Kalshi (an event name shows every outcome).
 // After one of those names a market, the other two with no market reuse that name.
+// /holders with no market reuses that name too, or the market from /pos, /alert, and the other market commands.
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // Each ping shows the market name and the same inside ladder as /ob.
@@ -341,7 +343,7 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 
 	cmd := alert.ParseCommand(u.Message.Text)
-	cmd = b.applyOBStick(cmd)
+	cmd = b.applyMarketStick(cmd)
 	min := b.state.EffectiveMinUSD(b.fallbackMin)
 	if cmd.Cmd == alert.CmdMinSizeSet {
 		b.state.SetMinUSD(cmd.MinUSD)
@@ -422,14 +424,47 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 }
 
-// applyOBStick remembers a named /ob, /obp, or /obk query. A later call of either
-// of the other two with no market reuses that query. The same command with no
-// market still asks for one.
-func (b *bot) applyOBStick(cmd alert.ParsedCommand) alert.ParsedCommand {
+// applyMarketStick remembers a named /ob, /obp, or /obk query. A later call of
+// either of the other two with no market reuses that query. The same command
+// with no market still asks for one. It also remembers the market from any
+// command that named one, so a later /holders with no market reuses it.
+func (b *bot) applyMarketStick(cmd alert.ParsedCommand) alert.ParsedCommand {
 	next, query, which := stickOrderBookMarket(cmd, b.state.LastOBQuery, obCommand(b.state.LastOBCmd))
 	b.state.LastOBQuery = query
 	b.state.LastOBCmd = obCommandName(which)
+	last := b.state.LastMarketQuery
+	if strings.TrimSpace(last) == "" {
+		last = b.state.LastOBQuery
+	}
+	next, market := stickHoldersMarket(next, last)
+	b.state.LastMarketQuery = market
 	return next
+}
+
+// stickHoldersMarket fills an empty /holders market from the last command that
+// named one. A command that names a market replaces that memory.
+func stickHoldersMarket(cmd alert.ParsedCommand, lastMarket string) (alert.ParsedCommand, string) {
+	if query := strings.TrimSpace(cmd.Market); query != "" && commandNamesMarket(cmd.Cmd) {
+		lastMarket = query
+		cmd.Market = query
+		return cmd, lastMarket
+	}
+	if cmd.Cmd == alert.CmdHolders {
+		if q := strings.TrimSpace(lastMarket); q != "" {
+			cmd.Market = q
+		}
+	}
+	return cmd, lastMarket
+}
+
+func commandNamesMarket(c alert.Command) bool {
+	switch c {
+	case alert.CmdPos, alert.CmdHolders, alert.CmdLastTrades, alert.CmdOB, alert.CmdOBP, alert.CmdOBK,
+		alert.CmdAlert, alert.CmdUnalert, alert.CmdPriceWatch, alert.CmdUnpriceWatch:
+		return true
+	default:
+		return false
+	}
 }
 
 // stickOrderBookMarket fills an empty market on /ob, /obp, or /obk from the last
