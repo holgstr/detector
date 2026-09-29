@@ -257,6 +257,162 @@ func TestFindMarketRejectsResolvedSlug(t *testing.T) {
 	}
 }
 
+func TestPickBestMarketNameTypo(t *testing.T) {
+	hits := []SearchMarket{
+		{
+			Market:         Market{ConditionID: "dem", Question: "Will the Democratic Party win the FL-25 House seat?", Slug: "will-the-democratic-party-win-the-fl-25-house-seat"},
+			GroupItemTitle: "Jared Moskowitz (D)",
+			EventTitle:     "FL-25 House Election Winner",
+			Volume24hr:     112,
+			Active:         true,
+		},
+		{
+			Market:         Market{ConditionID: "gop", Question: "Will the Republican Party win the FL-25 House seat?", Slug: "will-the-republican-party-win-the-fl-25-house-seat"},
+			GroupItemTitle: "Scott Singer (R)",
+			EventTitle:     "FL-25 House Election Winner",
+			Volume24hr:     40,
+			Active:         true,
+		},
+		{
+			Market:         Market{ConditionID: "margin", Question: "Will the Republican Party candidate win the 2026 FL-25 House election by 12% or more?", Slug: "fl-25-margin"},
+			GroupItemTitle: "Republican 12%+",
+			EventTitle:     "FL-25 House Election Margin of Victory",
+			Volume24hr:     9000,
+			Active:         true,
+		},
+	}
+	for _, q := range []string{"Moskowitz", "Mowkowitz"} {
+		got, ok := PickBestMarket(q, hits)
+		if !ok || got.Market.ConditionID != "dem" {
+			t.Fatalf("%s: got %+v ok=%v", q, got.Market.ConditionID, ok)
+		}
+	}
+}
+
+func TestCandidateFollowUps(t *testing.T) {
+	events := []publicSearchEvent{
+		{
+			Title: "Florida Democratic Senate Primary Winner",
+			Slug:  "florida-democratic-senate-primary-winner",
+			Markets: []publicSearchMarket{
+				{GroupItemTitle: "Jared Moskowitz", Question: "Will Jared Moskowitz be the Democratic nominee for Senate in Florida?"},
+			},
+		},
+		{
+			Title: "FL-25 Democratic Primary Winner",
+			Slug:  "fl-25-democratic-primary-winner",
+			Markets: []publicSearchMarket{
+				{GroupItemTitle: "Jared Moskowitz", Question: "Will Jared Moskowitz be the FL-25 Democratic nominee?"},
+			},
+		},
+		{
+			Title: "FL-23 Democratic Primary Winner",
+			Slug:  "fl-23-democratic-primary-winner",
+			Markets: []publicSearchMarket{
+				{GroupItemTitle: "Jared Moskowitz", Question: "Will Jared Moskowitz be the Democratic Nominee for FL-23?"},
+			},
+		},
+		{
+			Title: "M15 Darwin: Someone Else",
+			Slug:  "m15-darwin",
+			Markets: []publicSearchMarket{
+				{Question: "Someone Else vs Player"},
+			},
+		},
+	}
+	got := candidateFollowUps("Mowkowitz", events)
+	if len(got) != 2 || got[0] != "FL-25" || got[1] != "FL-23" {
+		t.Fatalf("follow-ups: %#v", got)
+	}
+	if nameLikeQuery(searchTokens("FL-25")) {
+		t.Fatal("district query is not a name")
+	}
+}
+
+func TestSearchMarketsCarriesCandidateToLiveRace(t *testing.T) {
+	var queries []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		queries = append(queries, q+" status="+r.URL.Query().Get("events_status"))
+		switch q {
+		case "Mowkowitz":
+			if r.URL.Query().Get("events_status") == "active" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"events": []map[string]any{{
+					"title":  "FL-25 Democratic Primary Winner",
+					"slug":   "fl-25-democratic-primary-winner",
+					"active": true,
+					"closed": true,
+					"markets": []map[string]any{{
+						"question":       "Will Jared Moskowitz be the FL-25 Democratic nominee?",
+						"conditionId":    "0xprimary",
+						"slug":           "jared-moskowitz-primary",
+						"groupItemTitle": "Jared Moskowitz",
+						"active":         true,
+						"closed":         true,
+					}},
+				}},
+			})
+		case "FL-25":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"events": []map[string]any{{
+					"title":  "FL-25 House Election Winner",
+					"slug":   "fl-25-house-election-winner",
+					"active": true,
+					"closed": false,
+					"markets": []map[string]any{
+						{
+							"question":       "Will the Republican Party win the FL-25 House seat?",
+							"conditionId":    "0xgop",
+							"slug":           "fl-25-gop",
+							"groupItemTitle": "Scott Singer (R)",
+							"outcomes":       `["Yes", "No"]`,
+							"active":         true,
+							"closed":         false,
+							"volume24hr":     40,
+						},
+						{
+							"question":       "Will the Democratic Party win the FL-25 House seat?",
+							"conditionId":    "0xmoskowitz",
+							"slug":           "fl-25-dem",
+							"groupItemTitle": "Jared Moskowitz (D)",
+							"outcomes":       `["Yes", "No"]`,
+							"active":         true,
+							"closed":         false,
+							"volume24hr":     112,
+						},
+					},
+				}},
+			})
+		default:
+			t.Errorf("unexpected q=%s", q)
+			_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	c := NewClient()
+	c.HTTP = ts.Client()
+	c.HTTP.Transport = rewriteHost(ts.URL)
+
+	best, err := c.FindMarket(context.Background(), "Mowkowitz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if best.Market.ConditionID != "0xmoskowitz" {
+		t.Fatalf("got %s %q", best.Market.ConditionID, best.GroupItemTitle)
+	}
+	if best.EventTitle != "FL-25 House Election Winner" {
+		t.Fatalf("event %q", best.EventTitle)
+	}
+	if len(queries) != 3 {
+		t.Fatalf("requests: %#v", queries)
+	}
+}
+
 func TestLooksLikeSlug(t *testing.T) {
 	if looksLikeSlug("Andersson") {
 		t.Fatal("name is not a slug")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -53,27 +54,58 @@ type publicSearchMarket struct {
 }
 
 // SearchMarkets runs Gamma /public-search and flattens nested event markets.
+// When a name matches only a resolved primary, the live general-election
+// market that lists that person as an outcome is included too.
 func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarket, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("empty search query")
 	}
+	hits, err := c.searchLiveMarkets(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if anyTextMatch(query, hits) || !nameLikeQuery(searchTokens(query)) {
+		return hits, nil
+	}
+	carried, err := c.carryCandidateMarkets(ctx, query)
+	if err != nil || len(carried) == 0 {
+		return hits, nil
+	}
+	return mergeSearchMarkets(hits, carried), nil
+}
 
+func (c *Client) searchLiveMarkets(ctx context.Context, query string) ([]SearchMarket, error) {
+	resp, err := c.searchPublic(ctx, query, true)
+	if err != nil {
+		return nil, err
+	}
+	return liveMarketsFromSearch(resp), nil
+}
+
+func (c *Client) searchPublic(ctx context.Context, query string, activeOnly bool) (publicSearchResponse, error) {
 	q := url.Values{}
 	q.Set("q", query)
 	q.Set("limit_per_type", fmt.Sprintf("%d", defaultSearchLimit))
-	q.Set("events_status", "active")
-	q.Set("keep_closed_markets", "0")
 	q.Set("sort", "volume24hr")
 	q.Set("ascending", "false")
 	q.Set("search_profiles", "false")
 	q.Set("search_tags", "false")
+	if activeOnly {
+		q.Set("events_status", "active")
+		q.Set("keep_closed_markets", "0")
+	} else {
+		q.Set("keep_closed_markets", "1")
+	}
 
 	var resp publicSearchResponse
 	if err := c.getJSON(ctx, gammaBase+"/public-search?"+q.Encode(), &resp); err != nil {
-		return nil, err
+		return publicSearchResponse{}, err
 	}
+	return resp, nil
+}
 
+func liveMarketsFromSearch(resp publicSearchResponse) []SearchMarket {
 	out := make([]SearchMarket, 0, 32)
 	seen := make(map[string]struct{})
 	for _, ev := range resp.Events {
@@ -120,7 +152,133 @@ func (c *Client) SearchMarkets(ctx context.Context, query string) ([]SearchMarke
 			})
 		}
 	}
+	return out
+}
+
+func mergeSearchMarkets(base, extra []SearchMarket) []SearchMarket {
+	seen := make(map[string]struct{}, len(base))
+	out := make([]SearchMarket, 0, len(base)+len(extra))
+	for _, h := range base {
+		cid := strings.TrimSpace(h.Market.ConditionID)
+		if cid == "" {
+			continue
+		}
+		if _, ok := seen[cid]; ok {
+			continue
+		}
+		seen[cid] = struct{}{}
+		out = append(out, h)
+	}
+	for _, h := range extra {
+		cid := strings.TrimSpace(h.Market.ConditionID)
+		if cid == "" {
+			continue
+		}
+		if _, ok := seen[cid]; ok {
+			continue
+		}
+		seen[cid] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
+// carryCandidateMarkets finds a live market whose outcome title is a person
+// Gamma only indexed on an earlier, resolved race. "Mowkowitz" hits the closed
+// FL-25 primary; the open book is "Jared Moskowitz (D)" on FL-25 House Election Winner.
+func (c *Client) carryCandidateMarkets(ctx context.Context, query string) ([]SearchMarket, error) {
+	resp, err := c.searchPublic(ctx, query, false)
+	if err != nil {
+		return nil, err
+	}
+	follow := candidateFollowUps(query, resp.Events)
+	var out []SearchMarket
+	for _, q := range follow {
+		hits, err := c.searchLiveMarkets(ctx, q)
+		if err != nil {
+			continue
+		}
+		out = append(out, hits...)
+	}
 	return out, nil
+}
+
+const maxCandidateFollowUps = 4
+
+var districtCode = regexp.MustCompile(`(?i)\b([a-z]{2})-(\d{1,2})\b`)
+
+// candidateFollowUps returns district codes (FL-25) from resolved events whose
+// outcome or question matches the query. Live search for that code finds the
+// general-election market that still lists the person.
+func candidateFollowUps(query string, events []publicSearchEvent) []string {
+	toks := searchTokens(query)
+	if len(toks) == 0 {
+		return nil
+	}
+	var out []string
+	seen := make(map[string]struct{})
+	add := func(code string) {
+		code = strings.ToUpper(strings.TrimSpace(code))
+		if code == "" {
+			return
+		}
+		if _, ok := seen[code]; ok {
+			return
+		}
+		if len(out) >= maxCandidateFollowUps {
+			return
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	for _, ev := range events {
+		if !eventNamesQuery(ev, toks) {
+			continue
+		}
+		blob := ev.Title + " " + ev.Slug
+		for _, m := range districtCode.FindAllStringSubmatch(blob, -1) {
+			add(m[1] + "-" + m[2])
+		}
+	}
+	return out
+}
+
+func eventNamesQuery(ev publicSearchEvent, toks []string) bool {
+	if haystackHasAll(strings.ToLower(ev.Title), toks) {
+		return true
+	}
+	for _, m := range ev.Markets {
+		hay := strings.ToLower(strings.TrimSpace(m.GroupItemTitle + " " + m.Question))
+		if haystackHasAll(hay, toks) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyTextMatch(query string, hits []SearchMarket) bool {
+	toks := searchTokens(query)
+	if len(toks) == 0 {
+		return false
+	}
+	for _, h := range hits {
+		if !isLiveMarket(h) {
+			continue
+		}
+		if matchRank(h, toks) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func nameLikeQuery(toks []string) bool {
+	for _, t := range toks {
+		if len([]rune(t)) >= 6 {
+			return true
+		}
+	}
+	return false
 }
 
 // FindMarket resolves a condition id, URL, slug, or free-text name.
@@ -338,12 +496,95 @@ func searchTokens(query string) []string {
 }
 
 func haystackHasAll(haystack string, toks []string) bool {
+	words := haystackWords(haystack)
 	for _, t := range toks {
-		if !strings.Contains(haystack, t) {
+		if strings.Contains(haystack, t) {
+			continue
+		}
+		if !closeWordIn(t, words) {
 			return false
 		}
 	}
 	return true
+}
+
+func haystackWords(haystack string) []string {
+	fields := strings.Fields(haystack)
+	words := make([]string, 0, len(fields))
+	for _, f := range fields {
+		w := strings.TrimFunc(f, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})
+		if w != "" {
+			words = append(words, w)
+		}
+	}
+	return words
+}
+
+// closeWordIn accepts a single-character slip on a name (Mowkowitz → Moskowitz).
+// Short tokens stay exact so "fl" / "25" do not drift.
+func closeWordIn(tok string, words []string) bool {
+	tr := []rune(tok)
+	if len(tr) < 6 {
+		return false
+	}
+	for _, w := range words {
+		wr := []rune(w)
+		if len(wr) == 0 || wr[0] != tr[0] {
+			continue
+		}
+		if editDistanceAtMost(tr, wr, 1) {
+			return true
+		}
+	}
+	return false
+}
+
+func editDistanceAtMost(a, b []rune, max int) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	if len(a)-len(b) > max {
+		return false
+	}
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		rowMin := cur[0]
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			del := prev[j] + 1
+			ins := cur[j-1] + 1
+			sub := prev[j-1] + cost
+			best := del
+			if ins < best {
+				best = ins
+			}
+			if sub < best {
+				best = sub
+			}
+			cur[j] = best
+			if best < rowMin {
+				rowMin = best
+			}
+		}
+		if rowMin > max {
+			return false
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)] <= max
 }
 
 func looksLikeMarketURL(s string) bool {
