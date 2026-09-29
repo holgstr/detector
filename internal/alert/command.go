@@ -154,9 +154,7 @@ func parseAlertCommand(rest string) ParsedCommand {
 		price, minSize, ok := ParseAlertConfirm(strings.Join(fields[len(fields)-2:], " "))
 		if ok {
 			market := strings.TrimSpace(strings.Join(fields[:len(fields)-2], " "))
-			if market != "" {
-				return ParsedCommand{Cmd: CmdAlert, Market: market, Price: price, MinSize: minSize}
-			}
+			return ParsedCommand{Cmd: CmdAlert, Market: market, Price: price, MinSize: minSize}
 		}
 	}
 	return ParsedCommand{Cmd: CmdAlert, Market: rest}
@@ -174,10 +172,24 @@ func parsePriceWatchCommand(rest string) ParsedCommand {
 	return ParsedCommand{Cmd: CmdPriceWatch, Market: market, Outcome: outcome, Delta: delta}
 }
 
-// parsePriceWatchArgs reads "<market> YES|NO <cents>" or "<market> <cents> YES|NO".
+// parsePriceWatchArgs reads "<market> YES|NO <cents>", "<market> <cents> YES|NO",
+// or just "YES|NO <cents>" when the market should come from the previous command.
 // Delta is returned in probability units (3 cents → 0.03).
 func parsePriceWatchArgs(rest string) (market, outcome string, delta float64, ok bool) {
 	fields := strings.Fields(rest)
+	if len(fields) == 2 {
+		if d, okd := parseDeltaCents(fields[1]); okd {
+			if side, oks := parseSide(fields[0]); oks {
+				return "", side, d, true
+			}
+		}
+		if d, okd := parseDeltaCents(fields[0]); okd {
+			if side, oks := parseSide(fields[1]); oks {
+				return "", side, d, true
+			}
+		}
+		return "", "", 0, false
+	}
 	if len(fields) < 3 {
 		return "", "", 0, false
 	}
@@ -406,7 +418,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match tracked wallets; an exact name or wallet works even if untracked)\n/pos <market> — tracked holdings (words, slug, or URL; ambiguous names prefer large tracked nets)\n/holders <market> — top 10 holders on each side, netted when a wallet holds both (words, slug, or URL; no market reuses the last command's market)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value (any Polymarket name)\n/port 5 <trader> — same list, only the top 5 by market value\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; names resolve even if untracked; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words pick tracked-heavy or high-volume markets)\n/obp <market> — Pascal book (4 closest ticks each side; an event name shows every outcome)\n/obk <market> — Kalshi book (4 closest Yes ticks each side; an event name shows every outcome)\nAfter one of those names a market, the other two with no market reuse that name (so /ob Aliens then /obk is /obk Aliens)\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000)\n/unalert <market> — stop a price alert\n/pricewatch <market> <YES|NO> <cents> — ping when that side's midpoint moves by N cents, then re-anchor\n/unpricewatch <market> — stop a price watch\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match tracked wallets; an exact name or wallet works even if untracked)\n/pos <market> — tracked holdings (words, slug, or URL; ambiguous names prefer large tracked nets)\n/holders <market> — top 10 holders on each side, netted when a wallet holds both (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value (any Polymarket name)\n/port 5 <trader> — same list, only the top 5 by market value\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; names resolve even if untracked; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words pick tracked-heavy or high-volume markets)\n/obp <market> — Pascal book (4 closest ticks each side; an event name shows every outcome)\n/obk <market> — Kalshi book (4 closest Yes ticks each side; an event name shows every outcome)\n/pos, /holders, /ob, /obp, and /obk with no market reuse the last one (so /ob Aliens then /holders, /pos, or /ob again). /alert 32 1000 and /pricewatch NO 3 do the same\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000). /alert alone lists watches\n/unalert <market> — stop a price alert\n/pricewatch <market> <YES|NO> <cents> — ping when that side's midpoint moves by N cents, then re-anchor\n/unpricewatch <market> — stop a price watch\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.
