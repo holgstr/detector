@@ -151,17 +151,26 @@ func holderLabel(name, wallet string) string {
 }
 
 // isBareWallet reports a display string that is a 0x address rather than a name.
+// Polymarket sometimes stores the name as the address plus a "-<timestamp>" suffix.
 func isBareWallet(s string) bool {
 	s = strings.TrimSpace(s)
 	if len(s) <= walletLabelRunes || !strings.HasPrefix(strings.ToLower(s), "0x") {
 		return false
 	}
-	for _, r := range s[2:] {
+	rest := s[2:]
+	hexN := 0
+	for _, r := range rest {
 		if !isHexRune(r) {
-			return false
+			break
 		}
+		hexN++
 	}
-	return true
+	// A full address (40 hex digits), with or without a trailing suffix.
+	if hexN >= 40 {
+		return true
+	}
+	// Any all-hex label longer than the abbreviation, such as a raw address.
+	return hexN == len(rest)
 }
 
 func isHexRune(r rune) bool {
