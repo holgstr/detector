@@ -93,17 +93,38 @@ func TestStickMarketReusesLastNamed(t *testing.T) {
 
 func TestApplyMarketStickPersistsLastNamedMarket(t *testing.T) {
 	b := &bot{state: &alert.State{LastOBQuery: "OldBook"}}
-	cmd := b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdHolders})
-	if cmd.Market != "OldBook" || b.state.LastMarketQuery != "OldBook" {
-		t.Fatalf("legacy ob memory %+v cmd %+v", b.state, cmd)
+	cmd, note := b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdHolders}, "")
+	if note != "" || cmd.Market != "OldBook" || b.state.LastMarketQuery != "OldBook" {
+		t.Fatalf("legacy ob memory %+v cmd %+v note %q", b.state, cmd, note)
 	}
-	cmd = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"})
-	if cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" || b.state.LastOBQuery != "Aliens" {
+	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"}, "")
+	if note != "" || cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" || b.state.LastOBQuery != "Aliens" {
 		t.Fatalf("state %+v cmd %+v", b.state, cmd)
 	}
-	cmd = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdPos})
-	if cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" {
+	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdPos}, "")
+	if note != "" || cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" {
 		t.Fatalf("inherit %+v cmd %+v", b.state, cmd)
+	}
+}
+
+func TestApplyMarketStickUsesReply(t *testing.T) {
+	fill := alert.Format(alert.Alert{
+		Name: "SnowLover7", Side: "BUY", Outcome: "No", Size: 32000, Price: 0.32,
+		Title: "Fed decision in September?",
+	})
+	b := &bot{state: &alert.State{LastMarketQuery: "Aliens"}}
+	cmd, note := b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB}, fill)
+	if note != "" || cmd.Market != "Fed decision in September?" || b.state.LastMarketQuery != "Fed decision in September?" {
+		t.Fatalf("reply %+v note %q state %+v", cmd, note, b.state)
+	}
+	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Mars"}, fill)
+	if note != "" || cmd.Market != "Mars" {
+		t.Fatalf("explicit wins %+v", cmd)
+	}
+	many := "Snow\n+10 YES  Fed decision?\n\nBob\n-5 NO  Other market"
+	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB}, many)
+	if note == "" || cmd.Market != "" || b.state.LastMarketQuery != "Mars" {
+		t.Fatalf("ambiguous cmd %+v note %q state %+v", cmd, note, b.state)
 	}
 }
 

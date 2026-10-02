@@ -42,9 +42,22 @@ type Update struct {
 }
 
 type Message struct {
-	Text string `json:"text"`
-	Chat Chat   `json:"chat"`
-	From User   `json:"from"`
+	Text    string   `json:"text"`
+	Caption string   `json:"caption"`
+	Chat    Chat     `json:"chat"`
+	From    User     `json:"from"`
+	ReplyTo *Message `json:"reply_to_message"`
+}
+
+// Body is the message text, or the caption when the text is empty.
+func (m *Message) Body() string {
+	if m == nil {
+		return ""
+	}
+	if strings.TrimSpace(m.Text) != "" {
+		return m.Text
+	}
+	return m.Caption
 }
 
 type Chat struct {
