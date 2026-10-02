@@ -51,6 +51,62 @@ type State struct {
 	// LastMarketQuery is the market text from the latest command that named one.
 	// A later command that needs a market and omits it reuses this.
 	LastMarketQuery string `json:"last_market_query,omitempty"`
+	// LastMarketCmd is the last /pos, /holders, /ob, /obp, or /obk. /other repeats it.
+	LastMarketCmd string `json:"last_market_cmd,omitempty"`
+	// SentMarkets remembers recent outbound message ids so a reply to an older
+	// /pos still repeats /pos rather than whatever command ran last.
+	SentMarkets []SentMarket `json:"sent_markets,omitempty"`
+}
+
+// SentMarket is one outbound Telegram message that showed a single market.
+type SentMarket struct {
+	MessageID int64  `json:"message_id"`
+	Cmd       string `json:"cmd"`
+	Market    string `json:"market"`
+}
+
+const maxSentMarkets = 40
+
+// RememberSent keeps the latest outbound market messages and the command
+// /other should repeat. market is the Polymarket ref for that message.
+func (s *State) RememberSent(id int64, cmd, market string) {
+	if s == nil {
+		return
+	}
+	cmd = strings.TrimSpace(cmd)
+	market = strings.TrimSpace(market)
+	if cmd != "" && market != "" {
+		s.LastMarketCmd = cmd
+		s.LastMarketQuery = market
+		s.LastOBQuery = market
+	}
+	if id == 0 || cmd == "" || market == "" {
+		return
+	}
+	kept := s.SentMarkets[:0]
+	for _, row := range s.SentMarkets {
+		if row.MessageID != id {
+			kept = append(kept, row)
+		}
+	}
+	kept = append(kept, SentMarket{MessageID: id, Cmd: cmd, Market: market})
+	if len(kept) > maxSentMarkets {
+		kept = kept[len(kept)-maxSentMarkets:]
+	}
+	s.SentMarkets = kept
+}
+
+// SentByID returns the command and market stored for an outbound message.
+func (s *State) SentByID(id int64) (SentMarket, bool) {
+	if s == nil || id == 0 {
+		return SentMarket{}, false
+	}
+	for i := len(s.SentMarkets) - 1; i >= 0; i-- {
+		if s.SentMarkets[i].MessageID == id {
+			return s.SentMarkets[i], true
+		}
+	}
+	return SentMarket{}, false
 }
 
 // EffectiveMinUSD is the chat override if set, otherwise fallback.

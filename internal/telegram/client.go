@@ -42,11 +42,12 @@ type Update struct {
 }
 
 type Message struct {
-	Text    string   `json:"text"`
-	Caption string   `json:"caption"`
-	Chat    Chat     `json:"chat"`
-	From    User     `json:"from"`
-	ReplyTo *Message `json:"reply_to_message"`
+	MessageID int64    `json:"message_id"`
+	Text      string   `json:"text"`
+	Caption   string   `json:"caption"`
+	Chat      Chat     `json:"chat"`
+	From      User     `json:"from"`
+	ReplyTo   *Message `json:"reply_to_message"`
 }
 
 // Body is the message text, or the caption when the text is empty.
@@ -103,18 +104,31 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 	return me, nil
 }
 
+type sentMessage struct {
+	MessageID int64 `json:"message_id"`
+}
+
 // SendMessage posts a plain-text DM.
 func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
+	_, err := c.SendMessageID(ctx, chatID, text)
+	return err
+}
+
+// SendMessageID posts a plain-text DM and returns Telegram's message id.
+func (c *Client) SendMessageID(ctx context.Context, chatID int64, text string) (int64, error) {
 	body, err := json.Marshal(sendReq{
 		ChatID:                chatID,
 		Text:                  text,
 		DisableWebPagePreview: true,
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	var unused json.RawMessage
-	return c.do(ctx, "sendMessage", bytes.NewReader(body), "application/json", &unused)
+	var sent sentMessage
+	if err := c.do(ctx, "sendMessage", bytes.NewReader(body), "application/json", &sent); err != nil {
+		return 0, err
+	}
+	return sent.MessageID, nil
 }
 
 // GetUpdates long-polls for inbound messages. timeoutSec=0 is a single non-blocking fetch.

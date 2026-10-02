@@ -15,6 +15,8 @@
 // /holders <market> lists the top 10 holders on each side (net if a wallet holds both), with acquisition price.
 // /pos, /holders, /ob, /obp, and /obk with no market reuse the market the previous command named.
 // Replying to a message that names one market (a fill, /pos, /ob, and the rest) does the same.
+// /other repeats /pos, /holders, /ob, /obp, or /obk for the other main outcome
+// (highest Yes price among the rest of the event). Reply to that message, or send /other next.
 // /alert <price> <size> and /pricewatch <YES|NO> <cents> do the same when the market is left off.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
@@ -392,10 +394,10 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 		replyNet(ctx, tg, api, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdPos {
-		replyPos(ctx, tg, api, chatID, cmd)
+		replyPos(ctx, tg, api, b, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdHolders {
-		replyHolders(ctx, tg, api, chatID, cmd)
+		replyHolders(ctx, tg, api, b, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdPort {
 		replyPort(ctx, tg, api, chatID, cmd)
@@ -404,13 +406,16 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 		replyLastTrades(ctx, tg, api, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdOB {
-		replyOB(ctx, tg, api, chatID, cmd)
+		replyOB(ctx, tg, api, b, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdOBP {
-		replyOBP(ctx, tg, books, chatID, cmd)
+		replyOBP(ctx, tg, books, b, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdOBK {
-		replyOBK(ctx, tg, kbooks, chatID, cmd)
+		replyOBK(ctx, tg, kbooks, b, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdOther {
+		replyOther(ctx, tg, api, books, kbooks, b, chatID, u.Message.ReplyTo)
 	}
 	if cmd.Cmd == alert.CmdAlert {
 		replyAlert(ctx, tg, api, b, chatID, cmd)
@@ -785,7 +790,85 @@ func replyLastTrades(ctx context.Context, tg *telegram.Client, api *polymarket.C
 	log.Printf("lasttrades %s trader=%q market=%q fills=%d", rep.Window, cmd.Trader, cmd.Market, len(rep.Trades))
 }
 
-func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+func replyOther(ctx context.Context, tg *telegram.Client, api *polymarket.Client, books *pascal.Client, kbooks *kalshi.Client, b *bot, chatID int64, reply *telegram.Message) {
+	var replyID int64
+	var replyText string
+	if reply != nil {
+		replyID = reply.MessageID
+		replyText = reply.Body()
+	}
+	b.mu.Lock()
+	sent := append([]alert.SentMarket(nil), b.state.SentMarkets...)
+	lastCmd := b.state.LastMarketCmd
+	lastMarket := strings.TrimSpace(b.state.LastMarketQuery)
+	if lastMarket == "" {
+		lastMarket = strings.TrimSpace(b.state.LastOBQuery)
+	}
+	b.mu.Unlock()
+
+	kind, market, errMsg := alert.OtherSource(replyID, replyText, sent, lastCmd, lastMarket)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	hit, err := api.FindMarket(ctx, market)
+	if err != nil {
+		msg := fmt.Sprintf("No active market matching %q.", market)
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "resolved") {
+			msg = fmt.Sprintf("%q is resolved, not an active market.", market)
+		} else if !strings.Contains(low, "active market") && !strings.Contains(low, "no active") {
+			msg = fmt.Sprintf("Couldn't load market: %v", err)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	if strings.TrimSpace(hit.Market.EventSlug) == "" {
+		if err := tg.SendMessage(ctx, chatID, "No other outcome on this event."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	markets, err := api.FetchEventMarkets(ctx, hit.Market.EventSlug)
+	if err != nil {
+		if err := tg.SendMessage(ctx, chatID, fmt.Sprintf("Couldn't load the other outcome: %v", err)); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	other, ok := alert.PickOtherOutcome(hit, markets)
+	if !ok {
+		if err := tg.SendMessage(ctx, chatID, "No other live outcome on this event."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	next := alert.ParsedCommand{
+		Cmd:         kind,
+		Market:      alert.OtherQuery(kind, other),
+		TrackMarket: alert.OtherTrackRef(other),
+	}
+	name, _ := alert.MarketCommandName(kind)
+	log.Printf("other %s %q -> %q", name, market, next.Market)
+	switch kind {
+	case alert.CmdHolders:
+		replyHolders(ctx, tg, api, b, chatID, next)
+	case alert.CmdOB:
+		replyOB(ctx, tg, api, b, chatID, next)
+	case alert.CmdOBP:
+		replyOBP(ctx, tg, books, b, chatID, next)
+	case alert.CmdOBK:
+		replyOBK(ctx, tg, kbooks, b, chatID, next)
+	default:
+		replyPos(ctx, tg, api, b, chatID, next)
+	}
+}
+
+func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
 		if err := tg.SendMessage(ctx, chatID, "Usage: /ob <market> — words, slug, or URL."); err != nil {
@@ -811,13 +894,11 @@ func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, c
 	if err != nil {
 		text += fmt.Sprintf("\n(partial fetch: %v)", err)
 	}
-	if err := tg.SendMessage(ctx, chatID, text); err != nil {
-		log.Printf("reply: %v", err)
-	}
+	b.sendTracked(ctx, tg, chatID, alert.CmdOB, trackRef(cmd, rep.URL, rep.Slug, rep.Title, query), text)
 	log.Printf("ob query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
 }
 
-func replyOBP(ctx context.Context, tg *telegram.Client, api *pascal.Client, chatID int64, cmd alert.ParsedCommand) {
+func replyOBP(ctx context.Context, tg *telegram.Client, api *pascal.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
 		if err := tg.SendMessage(ctx, chatID, "Usage: /obp <market> — words or a Pascal symbol."); err != nil {
@@ -845,13 +926,11 @@ func replyOBP(ctx context.Context, tg *telegram.Client, api *pascal.Client, chat
 	if err != nil {
 		text += fmt.Sprintf("\n(partial fetch: %v)", err)
 	}
-	if err := tg.SendMessage(ctx, chatID, text); err != nil {
-		log.Printf("reply: %v", err)
-	}
+	b.sendTracked(ctx, tg, chatID, alert.CmdOBP, trackRef(cmd, "", "", rep.Title, query), text)
 	log.Printf("obp query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
 }
 
-func replyOBK(ctx context.Context, tg *telegram.Client, api *kalshi.Client, chatID int64, cmd alert.ParsedCommand) {
+func replyOBK(ctx context.Context, tg *telegram.Client, api *kalshi.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
 		if err := tg.SendMessage(ctx, chatID, "Usage: /obk <market> — words or a Kalshi ticker."); err != nil {
@@ -879,9 +958,7 @@ func replyOBK(ctx context.Context, tg *telegram.Client, api *kalshi.Client, chat
 	if err != nil {
 		text += fmt.Sprintf("\n(partial fetch: %v)", err)
 	}
-	if err := tg.SendMessage(ctx, chatID, text); err != nil {
-		log.Printf("reply: %v", err)
-	}
+	b.sendTracked(ctx, tg, chatID, alert.CmdOBK, trackRef(cmd, "", "", rep.Title, query), text)
 	log.Printf("obk query=%q market=%q outcomes=%d", query, rep.Title, len(rep.Books))
 }
 
@@ -1206,7 +1283,7 @@ func replyCancel(ctx context.Context, tg *telegram.Client, b *bot, chatID int64)
 	}
 }
 
-func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
 		if err := tg.SendMessage(ctx, chatID, "Usage: /pos <market> — words, slug, or URL."); err != nil {
@@ -1232,15 +1309,14 @@ func replyPos(ctx context.Context, tg *telegram.Client, api *polymarket.Client, 
 	if err != nil {
 		chunks = append(chunks, fmt.Sprintf("(partial fetch: %v)", err))
 	}
+	ref := trackRef(cmd, rep.URL, rep.Slug, rep.Title, query)
 	for _, text := range chunks {
-		if err := tg.SendMessage(ctx, chatID, text); err != nil {
-			log.Printf("reply: %v", err)
-		}
+		b.sendTracked(ctx, tg, chatID, alert.CmdPos, ref, text)
 	}
 	log.Printf("pos query=%q market=%q holders=%d", query, rep.Title, len(rep.Holdings))
 }
 
-func replyHolders(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+func replyHolders(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
 	query := strings.TrimSpace(cmd.Market)
 	if query == "" {
 		if err := tg.SendMessage(ctx, chatID, "Usage: /holders <market> — words, slug, or URL."); err != nil {
@@ -1269,12 +1345,47 @@ func replyHolders(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 		return
 	}
 	chunks := alert.FormatHoldersReport(rep)
+	ref := trackRef(cmd, rep.URL, rep.Slug, rep.Title, query)
 	for _, text := range chunks {
-		if err := tg.SendMessage(ctx, chatID, text); err != nil {
-			log.Printf("reply: %v", err)
-		}
+		b.sendTracked(ctx, tg, chatID, alert.CmdHolders, ref, text)
 	}
 	log.Printf("holders query=%q market=%q holders=%d", query, rep.Title, len(rep.Holdings))
+}
+
+func trackRef(cmd alert.ParsedCommand, url, slug, title, query string) string {
+	if s := strings.TrimSpace(cmd.TrackMarket); s != "" {
+		return s
+	}
+	if cmd.Cmd == alert.CmdOBP || cmd.Cmd == alert.CmdOBK {
+		if s := strings.TrimSpace(query); s != "" {
+			return s
+		}
+	}
+	for _, s := range []string{url, slug, title, query} {
+		if s = strings.TrimSpace(s); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func (b *bot) sendTracked(ctx context.Context, tg *telegram.Client, chatID int64, kind alert.Command, ref, text string) {
+	id, err := tg.SendMessageID(ctx, chatID, text)
+	if err != nil {
+		log.Printf("reply: %v", err)
+		return
+	}
+	name, ok := alert.MarketCommandName(kind)
+	ref = strings.TrimSpace(ref)
+	if !ok || ref == "" {
+		return
+	}
+	b.mu.Lock()
+	b.state.RememberSent(id, name, ref)
+	if err := alert.SaveState(b.path, b.state); err != nil {
+		log.Printf("save state: %v", err)
+	}
+	b.mu.Unlock()
 }
 
 func countMarkets(r alert.NetReport) int {
