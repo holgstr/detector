@@ -14,6 +14,7 @@
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /holders <market> lists the top 10 holders on each side (net if a wallet holds both), with acquisition price.
 // /pos, /holders, /ob, /obp, and /obk with no market reuse the market the previous command named.
+// Replying to a message that names one market (a fill, /pos, /ob, and the rest) does the same.
 // /alert <price> <size> and /pricewatch <YES|NO> <cents> do the same when the market is left off.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
@@ -342,8 +343,12 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 		return
 	}
 
-	cmd := alert.ParseCommand(u.Message.Text)
-	cmd = b.applyMarketStick(cmd)
+	cmd := alert.ParseCommand(u.Message.Body())
+	var replyText string
+	if u.Message.ReplyTo != nil {
+		replyText = u.Message.ReplyTo.Body()
+	}
+	cmd, replyNote := b.applyMarketStick(cmd, replyText)
 	min := b.state.EffectiveMinUSD(b.fallbackMin)
 	if cmd.Cmd == alert.CmdMinSizeSet {
 		b.state.SetMinUSD(cmd.MinUSD)
@@ -358,8 +363,20 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if err := alert.SaveState(b.path, b.state); err != nil {
 		log.Printf("save state: %v", err)
 	}
-	log.Printf("chat %d text=%q cmd=%d first=%v", chatID, u.Message.Text, cmd.Cmd, first)
+	log.Printf("chat %d text=%q cmd=%d first=%v", chatID, u.Message.Body(), cmd.Cmd, first)
 	b.mu.Unlock()
+
+	if replyNote != "" {
+		if first {
+			if err := tg.SendMessage(ctx, chatID, welcome(min)); err != nil {
+				log.Printf("reply: %v", err)
+			}
+		}
+		if err := tg.SendMessage(ctx, chatID, replyNote); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
 
 	if pending && cmd.Cmd == alert.CmdNone {
 		replyAlertConfirm(ctx, tg, b, chatID, u.Message.Text)
@@ -426,7 +443,21 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 
 // applyMarketStick remembers the market from any command that named one.
 // A later command that needs a market and omits it reuses that name.
-func (b *bot) applyMarketStick(cmd alert.ParsedCommand) alert.ParsedCommand {
+// A reply that names exactly one market supplies it first.
+// The note is set when the reply names several markets and the command
+// cannot run without picking one.
+func (b *bot) applyMarketStick(cmd alert.ParsedCommand, replyText string) (alert.ParsedCommand, string) {
+	note := ""
+	if strings.TrimSpace(cmd.Market) == "" && commandNamesMarket(cmd.Cmd) {
+		query, n := alert.MarketFromReply(replyText)
+		switch {
+		case n == 1:
+			cmd.Market = query
+		case n > 1 && commandDefaultsMarket(cmd):
+			note = "That message names more than one market."
+			return cmd, note
+		}
+	}
 	last := strings.TrimSpace(b.state.LastMarketQuery)
 	if last == "" {
 		last = strings.TrimSpace(b.state.LastOBQuery)
@@ -436,7 +467,7 @@ func (b *bot) applyMarketStick(cmd alert.ParsedCommand) alert.ParsedCommand {
 	if strings.TrimSpace(market) != "" {
 		b.state.LastOBQuery = market
 	}
-	return next
+	return next, note
 }
 
 // stickMarket fills a missing market on commands that require one, from the

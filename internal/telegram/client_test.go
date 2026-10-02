@@ -88,8 +88,45 @@ func TestGetUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(up) != 1 || up[0].Message.Chat.ID != 123 || up[0].Message.Text != "/start" {
+	if len(up) != 1 || up[0].Message.Chat.ID != 123 || up[0].Message.Text != "/start" || up[0].Message.ReplyTo != nil {
 		t.Fatalf("%+v", up)
+	}
+}
+
+func TestGetUpdatesReply(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"result": []map[string]any{
+				{
+					"update_id": 9,
+					"message": map[string]any{
+						"text": "/ob",
+						"chat": map[string]any{"id": 123, "type": "private"},
+						"from": map[string]any{"id": 123, "username": "me"},
+						"reply_to_message": map[string]any{
+							"text": "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?",
+							"chat": map[string]any{"id": 123, "type": "private"},
+						},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(ts.Close)
+
+	c := New("TEST")
+	c.Base = ts.URL
+	c.HTTP = ts.Client()
+	up, err := c.GetUpdates(context.Background(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(up) != 1 || up[0].Message.Body() != "/ob" || up[0].Message.ReplyTo == nil {
+		t.Fatalf("%+v", up)
+	}
+	if !strings.Contains(up[0].Message.ReplyTo.Body(), "Fed decision") {
+		t.Fatalf("%q", up[0].Message.ReplyTo.Body())
 	}
 }
 
