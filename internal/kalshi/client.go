@@ -44,6 +44,7 @@ type Market struct {
 	EventTicker string
 	Event       string
 	Name        string
+	Title       string // contract question, distinct from the outcome name
 	Tick        float64
 	LastPrice   float64
 	Volume      float64
@@ -262,6 +263,7 @@ func marketFrom(m rawMarket, eventTicker, eventTitle string) Market {
 		EventTicker: code,
 		Event:       eventTitle,
 		Name:        name,
+		Title:       strings.TrimSpace(m.Title),
 		Tick:        tickFrom(m.PriceRanges),
 		LastPrice:   parseDec(m.LastPriceDollars),
 		Volume:      vol,

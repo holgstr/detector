@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/holgstr/detector/internal/venuequery"
 )
 
 // Pick is which outcome books /obp should load.
@@ -18,6 +20,8 @@ type Pick struct {
 
 // PickMarkets chooses an event from text-search hits.
 // An event-level query (florida governor) expands to every outcome.
+// A Polymarket question ("Will the Republicans win the Nevada governor race")
+// drops boilerplate and matches the main winner market, then the named party.
 // A query that also names one outcome (republicans) stays on that book.
 func PickMarkets(query string, hits []Market) (Pick, error) {
 	query = strings.TrimSpace(query)
@@ -34,7 +38,7 @@ func PickMarkets(query string, hits []Market) (Pick, error) {
 		}
 	}
 
-	toks := tokens(query)
+	toks := venuequery.MatchTokens(query)
 	if len(toks) == 0 {
 		return Pick{}, fmt.Errorf("empty query")
 	}
@@ -58,7 +62,7 @@ func PickMarkets(query string, hits []Market) (Pick, error) {
 		return Pick{}, fmt.Errorf("no live Pascal market matching %q", query)
 	}
 
-	event := chooseEvent(matched, best, toks)
+	event := chooseEvent(matched, best, query)
 	var chosen []Market
 	for _, s := range matched {
 		if s.rank == best && s.m.EventCode == event {
@@ -78,11 +82,9 @@ type scored struct {
 }
 
 // chooseEvent picks one event among the best text-match rank.
-// Event-level ties prefer the main market over a side market the query did
-// not name (poll, margin, spread, turnout), then higher 24h volume.
-// Outcome-level ties stay with the first hit, which text-search already
-// orders by volume.
-func chooseEvent(matched []scored, best int, queryToks []string) string {
+// Ties prefer the main market (fewer extra title words such as poll, margin,
+// or turnout) over a side market, then higher 24h volume.
+func chooseEvent(matched []scored, best int, query string) string {
 	type cand struct {
 		code    string
 		penalty int
@@ -98,12 +100,12 @@ func chooseEvent(matched []scored, best int, queryToks []string) string {
 		code := s.m.EventCode
 		j, ok := index[code]
 		if !ok {
-			pen := 0
-			if best == 2 {
-				pen = sidePenalty(s.m.Event, queryToks)
-			}
 			index[code] = len(cands)
-			cands = append(cands, cand{code: code, penalty: pen, order: i})
+			cands = append(cands, cand{
+				code:    code,
+				penalty: venuequery.EventPenalty(s.m.Event, query),
+				order:   i,
+			})
 			j = index[code]
 		}
 		c := cands[j]
@@ -125,91 +127,26 @@ func chooseEvent(matched []scored, best int, queryToks []string) string {
 	return cands[0].code
 }
 
-// sidePenalty counts derivative words in an event title that the query did
-// not ask for. "Michigan Senate Winner" scores 0 for "michigan senate";
-// "Emerson Michigan Senate poll margin" scores 2.
-func sidePenalty(event string, queryToks []string) int {
-	seen := make(map[string]struct{})
-	n := 0
-	for _, w := range tokens(event) {
-		key, ok := sideKey(w)
-		if !ok {
-			continue
-		}
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		if tokenCovered(key, queryToks) || tokenCovered(w, queryToks) {
-			continue
-		}
-		seen[key] = struct{}{}
-		n++
-	}
-	return n
-}
-
-func sideKey(w string) (string, bool) {
-	for _, s := range []string{"poll", "margin", "spread", "turnout"} {
-		if w == s || strings.HasPrefix(w, s) {
-			return s, true
-		}
-	}
-	return "", false
-}
-
-func tokenCovered(word string, toks []string) bool {
-	for _, t := range toks {
-		if t == word || strings.Contains(word, t) || strings.Contains(t, word) {
-			return true
-		}
-	}
-	return false
-}
-
 func queryNamesEvent(query, event string) bool {
 	q := strings.Trim(strings.ToUpper(strings.TrimSpace(query)), ".")
 	return q != "" && q == strings.ToUpper(event)
 }
 
 func matchRank(m Market, toks []string) int {
-	name := hay(m.Name)
-	event := hay(m.Event)
-	sym := hay(m.Symbol)
-	if hasAll(name, toks) {
+	hint := venuequery.PartyHint(m.Symbol)
+	name := strings.ToLower(strings.TrimSpace(m.Name + " " + hint))
+	event := strings.ToLower(strings.TrimSpace(m.Event))
+	sym := strings.ToLower(m.Symbol)
+	if venuequery.ContainsAll(name, toks) {
 		return 3
 	}
-	if hasAll(event, toks) {
+	if venuequery.ContainsAll(event, toks) {
 		return 2
 	}
-	if hasAll(sym, toks) || hasAll(name+" "+event+" "+sym, toks) {
+	if venuequery.ContainsAll(sym, toks) || venuequery.ContainsAll(name+" "+event+" "+sym, toks) {
 		return 1
 	}
 	return 0
-}
-
-func hay(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
-}
-
-func hasAll(haystack string, toks []string) bool {
-	for _, t := range toks {
-		if !strings.Contains(haystack, t) {
-			return false
-		}
-	}
-	return true
-}
-
-func tokens(query string) []string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(query) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-			continue
-		}
-		b.WriteByte(' ')
-	}
-	return strings.Fields(b.String())
 }
 
 // looksLikeSymbol reports an EVENT.MARKET identifier.

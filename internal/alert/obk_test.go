@@ -15,9 +15,13 @@ type fakeKalshi struct {
 	market kalshi.Market
 	miss   bool
 	books  map[string]kalshi.Book
+	only   string
 }
 
-func (f fakeKalshi) TextSearch(context.Context, string) ([]kalshi.Market, error) {
+func (f fakeKalshi) TextSearch(_ context.Context, q string) ([]kalshi.Market, error) {
+	if f.only != "" && q != f.only {
+		return nil, nil
+	}
 	return f.hits, nil
 }
 func (f fakeKalshi) Market(context.Context, string) (kalshi.Market, error) {
@@ -77,6 +81,26 @@ func TestFetchKalshiOBEvent(t *testing.T) {
 	}
 	if strings.Contains(text, "90.0¢") || strings.Contains(text, "OLD") {
 		t.Fatalf("extra level or resolved outcome leaked:\n%s", text)
+	}
+}
+
+func TestFetchKalshiOBPolymarketQuestion(t *testing.T) {
+	api := fakeKalshi{
+		only: "nevada governor",
+		hits: []kalshi.Market{
+			{Ticker: "GOVPARTYNV-26-D", EventTicker: "GOVPARTYNV-26", Event: "Nevada Governor winner?", Name: "Aaron Ford", Title: "Will the Democratic party win the governorship in Nevada"},
+			{Ticker: "GOVPARTYNV-26-R", EventTicker: "GOVPARTYNV-26", Event: "Nevada Governor winner?", Name: "Joe Lombardo", Title: "Will the Republican party win the governorship in Nevada"},
+		},
+		books: map[string]kalshi.Book{
+			"GOVPARTYNV-26-R": {Bids: []kalshi.Level{{Price: 0.55, Size: 10}}},
+		},
+	}
+	rep, err := FetchKalshiOB(context.Background(), api, "Will the Republicans win the Nevada governor race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Books) != 1 || rep.Books[0].Outcome != "Joe Lombardo" || rep.Title != "Nevada Governor winner?" {
+		t.Fatalf("%+v", rep)
 	}
 }
 

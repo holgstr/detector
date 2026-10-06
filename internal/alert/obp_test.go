@@ -13,9 +13,13 @@ type fakePascal struct {
 	event  []pascal.Market
 	symbol []pascal.Market
 	books  map[string]pascal.Book
+	only   string
 }
 
-func (f fakePascal) TextSearch(context.Context, string) ([]pascal.Market, error) {
+func (f fakePascal) TextSearch(_ context.Context, q string) ([]pascal.Market, error) {
+	if f.only != "" && q != f.only {
+		return nil, nil
+	}
 	return f.hits, nil
 }
 func (f fakePascal) MarketsBySymbols(context.Context, []string) ([]pascal.Market, error) {
@@ -69,6 +73,26 @@ func TestFetchPascalOBEvent(t *testing.T) {
 	}
 	if strings.Contains(text, "90.0¢") || strings.Contains(text, "OLD") {
 		t.Fatalf("extra level or resolved outcome leaked:\n%s", text)
+	}
+}
+
+func TestFetchPascalOBPolymarketQuestion(t *testing.T) {
+	api := fakePascal{
+		only: "nevada governor",
+		hits: []pascal.Market{
+			{Symbol: "NV_GOV_2026.DEM", EventCode: "NV_GOV_2026", Event: "Nevada Governor Winner", Name: "Democrats"},
+			{Symbol: "NV_GOV_2026.REP", EventCode: "NV_GOV_2026", Event: "Nevada Governor Winner", Name: "Republicans"},
+		},
+		books: map[string]pascal.Book{
+			"NV_GOV_2026.REP": {Bids: []pascal.Level{{Price: 0.55, Size: 10}}},
+		},
+	}
+	rep, err := FetchPascalOB(context.Background(), api, "Will the Republicans win the Nevada governor race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Books) != 1 || rep.Books[0].Outcome != "Republicans" || rep.Title != "Nevada Governor Winner" {
+		t.Fatalf("%+v", rep)
 	}
 }
 
