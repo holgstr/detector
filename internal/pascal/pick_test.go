@@ -24,6 +24,22 @@ func TestPickMarketsEventExpands(t *testing.T) {
 	}
 }
 
+func TestPickMarketsPolymarketQuestion(t *testing.T) {
+	hits := []Market{
+		{Symbol: "NV_GOV_MOV.R2", EventCode: "NV_GOV_MOV", Event: "Nevada Governor margin of victory", Name: "Republicans by 2", Volume24h: 900},
+		{Symbol: "NV_GOV_2026.DEM", EventCode: "NV_GOV_2026", Event: "Nevada Governor Winner", Name: "Democrats", Volume24h: 40},
+		{Symbol: "NV_GOV_2026.REP", EventCode: "NV_GOV_2026", Event: "Nevada Governor Winner", Name: "Republicans", Volume24h: 100},
+		{Symbol: "NV_LTGOV_2026.REP", EventCode: "NV_LTGOV_2026", Event: "Nevada Lieutenant Governor Winner", Name: "Republicans", Volume24h: 10},
+	}
+	got, err := PickMarkets("Will the Republicans win the Nevada governor race", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExpandEvent || got.EventCode != "NV_GOV_2026" || len(got.Markets) != 1 || got.Markets[0].Symbol != "NV_GOV_2026.REP" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestPickMarketsOutcomeStaysNarrow(t *testing.T) {
 	hits := []Market{
 		{Symbol: "FL_GOV_2026.REP", EventCode: "FL_GOV_2026", Event: "Florida Governor Winner", Name: "Republicans"},

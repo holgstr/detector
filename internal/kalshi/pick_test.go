@@ -24,6 +24,31 @@ func TestPickMarketsEventExpands(t *testing.T) {
 	}
 }
 
+func TestPickMarketsPolymarketQuestion(t *testing.T) {
+	hits := []Market{
+		{Ticker: "KXMIDTERMMOV-NVGOVR-P2", EventTicker: "KXMIDTERMMOV-NVGOVR", Event: "Nevada Governor margin of victory", Name: "Lombardo, 2+ pts", Title: "Will the margin of victory for Republicans in the governor election in Nevada be at least 2 points?", Volume: 5000},
+		{Ticker: "KXGENERALCOUNTY-GOVPARTYNV-26-WASH", EventTicker: "KXGENERALCOUNTY-GOVPARTYNV-26", Event: "Nevada Governor: which counties will Aaron Ford win?", Name: "Washoe", Volume: 800},
+		{Ticker: "GOVPARTYNV-26-D", EventTicker: "GOVPARTYNV-26", Event: "Nevada Governor winner?", Name: "Aaron Ford", Title: "Will the Democratic party win the governorship in Nevada", Volume: 100},
+		{Ticker: "GOVPARTYNV-26-R", EventTicker: "GOVPARTYNV-26", Event: "Nevada Governor winner?", Name: "Joe Lombardo", Title: "Will the Republican party win the governorship in Nevada", Volume: 200},
+		{Ticker: "KXNVLTGOV-26NOV03-SANT", EventTicker: "KXNVLTGOV-26NOV03", Event: "Nevada Lieutenant Governor winner?", Name: "Stavros Anthony", Volume: 50},
+	}
+	got, err := PickMarkets("Will the Republicans win the Nevada governor race", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExpandEvent || got.EventTicker != "GOVPARTYNV-26" || len(got.Markets) != 1 || got.Markets[0].Ticker != "GOVPARTYNV-26-R" {
+		t.Fatalf("%+v", got)
+	}
+
+	both, err := PickMarkets("nevada governor", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !both.ExpandEvent || both.EventTicker != "GOVPARTYNV-26" || len(both.Markets) != 2 {
+		t.Fatalf("%+v", both)
+	}
+}
+
 func TestPickMarketsOutcomeStaysNarrow(t *testing.T) {
 	hits := []Market{
 		{Ticker: "KXVOTECOUNTY-1", EventTicker: "KXVOTECOUNTY", Event: "Miami-Dade County, Florida: Byron Donalds vote percent", Name: "At least 50%"},

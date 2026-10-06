@@ -9,6 +9,7 @@ import (
 
 	"github.com/holgstr/detector/internal/pascal"
 	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/venuequery"
 )
 
 type pascalBookAPI interface {
@@ -78,11 +79,7 @@ func resolvePascalMarkets(ctx context.Context, api pascalBookAPI, query string) 
 	if utf8.RuneCountInString(query) < 3 {
 		return nil, fmt.Errorf("short query")
 	}
-	searchQuery := query
-	if utf8.RuneCountInString(searchQuery) > 64 {
-		searchQuery = string([]rune(searchQuery)[:64])
-	}
-	hits, err := api.TextSearch(ctx, searchQuery)
+	hits, err := searchPascal(ctx, api, query)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +106,35 @@ func resolvePascalMarkets(ctx context.Context, api pascalBookAPI, query string) 
 		return nil, fmt.Errorf("no live Pascal market matching %q", query)
 	}
 	return markets, nil
+}
+
+// searchPascal asks Pascal for the subject ("nevada governor"), not the full
+// Polymarket question. Pascal misses the event when leftover words are not
+// in the event title. The original wording is only a fallback.
+func searchPascal(ctx context.Context, api pascalBookAPI, query string) ([]pascal.Market, error) {
+	primary := clipSearch(venuequery.SearchQuery(query))
+	hits, err := api.TextSearch(ctx, primary)
+	if err != nil {
+		return nil, err
+	}
+	if _, perr := pascal.PickMarkets(query, hits); perr == nil {
+		return hits, nil
+	}
+	full := clipSearch(query)
+	if full == primary {
+		return hits, nil
+	}
+	more, err := api.TextSearch(ctx, full)
+	if err != nil {
+		return nil, err
+	}
+	if _, perr := pascal.PickMarkets(query, more); perr == nil {
+		return more, nil
+	}
+	if len(hits) == 0 {
+		return more, nil
+	}
+	return hits, nil
 }
 
 func pascalTitle(markets []pascal.Market) string {

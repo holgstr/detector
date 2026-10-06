@@ -10,6 +10,7 @@ import (
 
 	"github.com/holgstr/detector/internal/kalshi"
 	"github.com/holgstr/detector/internal/polymarket"
+	"github.com/holgstr/detector/internal/venuequery"
 )
 
 type kalshiBookAPI interface {
@@ -91,11 +92,7 @@ func resolveKalshiMarkets(ctx context.Context, api kalshiBookAPI, query string) 
 	if utf8.RuneCountInString(query) < 3 {
 		return nil, fmt.Errorf("short query")
 	}
-	searchQuery := query
-	if utf8.RuneCountInString(searchQuery) > 64 {
-		searchQuery = string([]rune(searchQuery)[:64])
-	}
-	hits, err := api.TextSearch(ctx, searchQuery)
+	hits, err := searchKalshi(ctx, api, query)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +114,41 @@ func resolveKalshiMarkets(ctx context.Context, api kalshiBookAPI, query string) 
 		return nil, fmt.Errorf("no live Kalshi market matching %q", query)
 	}
 	return markets, nil
+}
+
+// searchKalshi asks Kalshi for the subject ("nevada governor"), not the full
+// Polymarket question. The original wording is only a fallback.
+func searchKalshi(ctx context.Context, api kalshiBookAPI, query string) ([]kalshi.Market, error) {
+	primary := clipSearch(venuequery.SearchQuery(query))
+	hits, err := api.TextSearch(ctx, primary)
+	if err != nil {
+		return nil, err
+	}
+	if _, perr := kalshi.PickMarkets(query, hits); perr == nil {
+		return hits, nil
+	}
+	full := clipSearch(query)
+	if full == primary {
+		return hits, nil
+	}
+	more, err := api.TextSearch(ctx, full)
+	if err != nil {
+		return nil, err
+	}
+	if _, perr := kalshi.PickMarkets(query, more); perr == nil {
+		return more, nil
+	}
+	if len(hits) == 0 {
+		return more, nil
+	}
+	return hits, nil
+}
+
+func clipSearch(q string) string {
+	if utf8.RuneCountInString(q) > 64 {
+		return string([]rune(q)[:64])
+	}
+	return q
 }
 
 func liveKalshi(markets []kalshi.Market, event string) (live []kalshi.Market, resolved bool) {
