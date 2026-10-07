@@ -446,6 +446,17 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 }
 
+// marketMemory is the last market the chat named.
+// Precise is the venue id from the last reply (a Polymarket URL, or the words
+// when that reply has none). Search is the words the user typed, which /obp
+// and /obk can search when Precise is a Polymarket link, and which /ob can
+// search when Precise is a Pascal symbol.
+type marketMemory struct {
+	Precise string
+	Search  string
+	Cmd     string
+}
+
 // applyMarketStick remembers the market from any command that named one.
 // A later command that needs a market and omits it reuses that name.
 // A reply that names exactly one market supplies it first.
@@ -463,14 +474,19 @@ func (b *bot) applyMarketStick(cmd alert.ParsedCommand, replyText string) (alert
 			return cmd, note
 		}
 	}
-	last := strings.TrimSpace(b.state.LastMarketQuery)
-	if last == "" {
-		last = strings.TrimSpace(b.state.LastOBQuery)
+	mem := marketMemory{
+		Precise: strings.TrimSpace(b.state.LastMarketQuery),
+		Search:  strings.TrimSpace(b.state.LastSearchQuery),
+		Cmd:     b.state.LastMarketCmd,
 	}
-	next, market := stickMarket(cmd, last)
-	b.state.LastMarketQuery = market
-	if strings.TrimSpace(market) != "" {
-		b.state.LastOBQuery = market
+	if mem.Precise == "" {
+		mem.Precise = strings.TrimSpace(b.state.LastOBQuery)
+	}
+	next, mem := stickMarket(cmd, mem)
+	b.state.LastMarketQuery = mem.Precise
+	b.state.LastSearchQuery = mem.Search
+	if strings.TrimSpace(mem.Precise) != "" {
+		b.state.LastOBQuery = mem.Precise
 	}
 	return next, note
 }
@@ -479,17 +495,60 @@ func (b *bot) applyMarketStick(cmd alert.ParsedCommand, replyText string) (alert
 // last command that named a market. A command that names a market replaces
 // that memory. Bare /alert, /pricewatch, /unalert, /unpricewatch, and
 // /lasttrades keep their own meaning when the market is left off.
-func stickMarket(cmd alert.ParsedCommand, lastMarket string) (alert.ParsedCommand, string) {
+// Same-venue follow-ups reuse the precise ref. A different venue reuses the
+// words the user typed, so /ob "South Carolina Senate" then /obp still
+// searches for South Carolina Senate after /ob stored a Polymarket URL.
+func stickMarket(cmd alert.ParsedCommand, mem marketMemory) (alert.ParsedCommand, marketMemory) {
 	if query := strings.TrimSpace(cmd.Market); query != "" && commandNamesMarket(cmd.Cmd) {
 		cmd.Market = query
-		return cmd, query
+		mem.Precise = query
+		mem.Search = query
+		return cmd, mem
 	}
 	if commandDefaultsMarket(cmd) {
-		if q := strings.TrimSpace(lastMarket); q != "" {
+		if q := stickyQuery(cmd.Cmd, mem); q != "" {
 			cmd.Market = q
 		}
 	}
-	return cmd, lastMarket
+	return cmd, mem
+}
+
+// stickyQuery is the market a bare command should reuse.
+func stickyQuery(cmd alert.Command, mem marketMemory) string {
+	precise := strings.TrimSpace(mem.Precise)
+	search := strings.TrimSpace(mem.Search)
+	if search == "" {
+		search = precise
+	}
+	if precise != "" && sameVenue(cmd, mem.Cmd) {
+		return precise
+	}
+	if search != "" {
+		return search
+	}
+	return precise
+}
+
+func sameVenue(cmd alert.Command, lastCmd string) bool {
+	prev, ok := alert.ParseMarketCommand(lastCmd)
+	if !ok {
+		return false
+	}
+	venue := commandVenue(cmd)
+	return venue != "" && venue == commandVenue(prev)
+}
+
+func commandVenue(c alert.Command) string {
+	switch c {
+	case alert.CmdPos, alert.CmdHolders, alert.CmdOB, alert.CmdAlert, alert.CmdUnalert, alert.CmdPriceWatch, alert.CmdUnpriceWatch:
+		return "poly"
+	case alert.CmdOBP:
+		return "pascal"
+	case alert.CmdOBK:
+		return "kalshi"
+	default:
+		return ""
+	}
 }
 
 func commandNamesMarket(c alert.Command) bool {

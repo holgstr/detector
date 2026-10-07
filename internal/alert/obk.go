@@ -89,6 +89,7 @@ func resolveKalshiMarkets(ctx context.Context, api kalshiBookAPI, query string) 
 		}
 	}
 
+	query = venuequery.SubjectQuery(query)
 	if utf8.RuneCountInString(query) < 3 {
 		return nil, fmt.Errorf("short query")
 	}

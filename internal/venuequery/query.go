@@ -12,11 +12,48 @@ import (
 	"unicode"
 )
 
+// SubjectQuery turns a Polymarket URL into the event name other venues can
+// search ("south carolina senate 2026"). Words the user typed are unchanged.
+func SubjectQuery(query string) string {
+	q := strings.TrimSpace(query)
+	low := strings.ToLower(q)
+	const host = "polymarket.com/"
+	idx := strings.Index(low, host)
+	if idx < 0 {
+		return q
+	}
+	rest := q[idx+len(host):]
+	if cut := strings.IndexAny(rest, "?#"); cut >= 0 {
+		rest = rest[:cut]
+	}
+	rest = strings.Trim(rest, "/")
+	var slug string
+	for _, part := range strings.Split(rest, "/") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		switch strings.ToLower(part) {
+		case "event", "events", "market", "markets", "sports":
+			continue
+		}
+		slug = part
+		break
+	}
+	if slug == "" {
+		return q
+	}
+	slug = strings.ReplaceAll(slug, "-", " ")
+	slug = strings.ReplaceAll(slug, "_", " ")
+	return strings.TrimSpace(slug)
+}
+
 // SearchQuery is the text to send to a venue search API: the subject, without
 // question boilerplate or a party name. Party words are kept for local
 // matching (MatchTokens) but dropped here because Pascal's search misses the
 // event when the party is not part of the event title.
 func SearchQuery(query string) string {
+	query = SubjectQuery(query)
 	kept := withoutParty(MatchTokens(query))
 	if len(kept) == 0 {
 		kept = MatchTokens(query)
