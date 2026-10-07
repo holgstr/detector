@@ -96,6 +96,32 @@ func TestFetchPascalOBPolymarketQuestion(t *testing.T) {
 	}
 }
 
+func TestFetchPascalOBPolymarketURL(t *testing.T) {
+	api := fakePascal{
+		only: "south carolina senate",
+		hits: []pascal.Market{
+			{Symbol: "SC_SENATE_2026.DEM", EventCode: "SC_SENATE_2026", Event: "South Carolina Senate Winner", Name: "Democrats"},
+			{Symbol: "SC_SENATE_2026.REP", EventCode: "SC_SENATE_2026", Event: "South Carolina Senate Winner", Name: "Republicans"},
+		},
+		event: []pascal.Market{
+			{Symbol: "SC_SENATE_2026.DEM", EventCode: "SC_SENATE_2026", Event: "South Carolina Senate Winner", Name: "Democrats"},
+			{Symbol: "SC_SENATE_2026.REP", EventCode: "SC_SENATE_2026", Event: "South Carolina Senate Winner", Name: "Republicans"},
+		},
+		books: map[string]pascal.Book{
+			"SC_SENATE_2026.DEM": {Bids: []pascal.Level{{Price: 0.40, Size: 10}}},
+			"SC_SENATE_2026.REP": {Bids: []pascal.Level{{Price: 0.60, Size: 12}}},
+		},
+	}
+	url := "https://polymarket.com/event/south-carolina-senate-2026/will-the-democrats-win-the-south-carolina-senate-race-in-2026"
+	rep, err := FetchPascalOB(context.Background(), api, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Title != "South Carolina Senate Winner" || len(rep.Books) != 2 {
+		t.Fatalf("%+v", rep)
+	}
+}
+
 func TestFetchPascalOBSymbol(t *testing.T) {
 	api := fakePascal{
 		symbol: []pascal.Market{

@@ -29,65 +29,93 @@ func TestCommandRepliesHelp(t *testing.T) {
 }
 
 func TestStickMarketReusesLastNamed(t *testing.T) {
-	var last string
+	var mem marketMemory
 
-	cmd, last := stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB, Market: " Aliens "}, last)
-	if cmd.Market != "Aliens" || last != "Aliens" {
-		t.Fatalf("named /ob: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem := stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB, Market: " Aliens "}, mem)
+	if cmd.Market != "Aliens" || mem.Precise != "Aliens" || mem.Search != "Aliens" {
+		t.Fatalf("named /ob: cmd=%q mem=%+v", cmd.Market, mem)
 	}
 	for _, c := range []alert.Command{alert.CmdOBK, alert.CmdOBP, alert.CmdOB, alert.CmdPos, alert.CmdHolders} {
-		cmd, last = stickMarket(alert.ParsedCommand{Cmd: c}, last)
-		if cmd.Market != "Aliens" || last != "Aliens" {
-			t.Fatalf("bare %d: cmd=%q last=%q", c, cmd.Market, last)
+		cmd, mem = stickMarket(alert.ParsedCommand{Cmd: c}, mem)
+		if cmd.Market != "Aliens" || mem.Precise != "Aliens" || mem.Search != "Aliens" {
+			t.Fatalf("bare %d: cmd=%q mem=%+v", c, cmd.Market, mem)
 		}
 	}
 
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPos, Market: "Mars"}, last)
-	if cmd.Market != "Mars" || last != "Mars" {
-		t.Fatalf("named /pos: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPos, Market: "Mars"}, mem)
+	if cmd.Market != "Mars" || mem.Precise != "Mars" || mem.Search != "Mars" {
+		t.Fatalf("named /pos: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB}, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB}, mem)
 	if cmd.Market != "Mars" {
 		t.Fatalf("bare /ob after /pos: %q", cmd.Market)
 	}
 
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdAlert, Price: 0.32, MinSize: 1000}, last)
-	if cmd.Market != "Mars" || last != "Mars" {
-		t.Fatalf("/alert price size: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdAlert, Price: 0.32, MinSize: 1000}, mem)
+	if cmd.Market != "Mars" || mem.Precise != "Mars" {
+		t.Fatalf("/alert price size: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPriceWatch, Outcome: "No", Delta: 0.03}, last)
-	if cmd.Market != "Mars" || last != "Mars" {
-		t.Fatalf("/pricewatch side: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPriceWatch, Outcome: "No", Delta: 0.03}, mem)
+	if cmd.Market != "Mars" || mem.Precise != "Mars" {
+		t.Fatalf("/pricewatch side: cmd=%q mem=%+v", cmd.Market, mem)
 	}
 
 	bareAlert := alert.ParsedCommand{Cmd: alert.CmdAlert}
-	cmd, last = stickMarket(bareAlert, last)
-	if cmd.Market != "" || last != "Mars" {
-		t.Fatalf("bare /alert lists: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(bareAlert, mem)
+	if cmd.Market != "" || mem.Precise != "Mars" {
+		t.Fatalf("bare /alert lists: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPriceWatch}, last)
-	if cmd.Market != "" || last != "Mars" {
-		t.Fatalf("bare /pricewatch lists: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPriceWatch}, mem)
+	if cmd.Market != "" || mem.Precise != "Mars" {
+		t.Fatalf("bare /pricewatch lists: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdUnalert}, last)
-	if cmd.Market != "" || last != "Mars" {
-		t.Fatalf("bare /unalert: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdUnalert}, mem)
+	if cmd.Market != "" || mem.Precise != "Mars" {
+		t.Fatalf("bare /unalert: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdLastTrades}, last)
-	if cmd.Market != "" || last != "Mars" {
-		t.Fatalf("bare /lasttrades: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdLastTrades}, mem)
+	if cmd.Market != "" || mem.Precise != "Mars" {
+		t.Fatalf("bare /lasttrades: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHelp}, last)
-	if last != "Mars" {
-		t.Fatalf("/help cleared memory: %q", last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHelp}, mem)
+	if mem.Precise != "Mars" || mem.Search != "Mars" {
+		t.Fatalf("/help cleared memory: %+v", mem)
 	}
-	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHolders}, "")
+	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHolders}, marketMemory{})
 	if cmd.Market != "" {
 		t.Fatalf("no history: %q", cmd.Market)
 	}
-	cmd, last = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHolders, Market: "Venus"}, "Mars")
-	if cmd.Market != "Venus" || last != "Venus" {
-		t.Fatalf("named /holders: cmd=%q last=%q", cmd.Market, last)
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdHolders, Market: "Venus"}, marketMemory{Precise: "Mars", Search: "Mars"})
+	if cmd.Market != "Venus" || mem.Precise != "Venus" || mem.Search != "Venus" {
+		t.Fatalf("named /holders: cmd=%q mem=%+v", cmd.Market, mem)
+	}
+}
+
+func TestStickMarketCrossVenueUsesTypedWords(t *testing.T) {
+	url := "https://polymarket.com/event/south-carolina-senate-2026/will-the-democrats-win-the-south-carolina-senate-race-in-2026"
+	mem := marketMemory{Precise: url, Search: "South Carolina Senate", Cmd: "ob"}
+
+	cmd, mem := stickMarket(alert.ParsedCommand{Cmd: alert.CmdOBP}, mem)
+	if cmd.Market != "South Carolina Senate" || mem.Precise != url || mem.Search != "South Carolina Senate" {
+		t.Fatalf("/obp after /ob: cmd=%q mem=%+v", cmd.Market, mem)
+	}
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOBK}, mem)
+	if cmd.Market != "South Carolina Senate" {
+		t.Fatalf("/obk after /ob: %q", cmd.Market)
+	}
+	cmd, mem = stickMarket(alert.ParsedCommand{Cmd: alert.CmdPos}, mem)
+	if cmd.Market != url {
+		t.Fatalf("same-venue /pos should keep the polymarket url: %q", cmd.Market)
+	}
+
+	mem = marketMemory{Precise: "SC_SENATE_2026.DEM", Search: "South Carolina Senate", Cmd: "obp"}
+	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOB}, mem)
+	if cmd.Market != "South Carolina Senate" {
+		t.Fatalf("/ob after /obp: %q", cmd.Market)
+	}
+	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOBP}, mem)
+	if cmd.Market != "SC_SENATE_2026.DEM" {
+		t.Fatalf("same-venue /obp should keep the symbol: %q", cmd.Market)
 	}
 }
 
@@ -98,12 +126,34 @@ func TestApplyMarketStickPersistsLastNamedMarket(t *testing.T) {
 		t.Fatalf("legacy ob memory %+v cmd %+v note %q", b.state, cmd, note)
 	}
 	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "Aliens"}, "")
-	if note != "" || cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" || b.state.LastOBQuery != "Aliens" {
+	if note != "" || cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" || b.state.LastOBQuery != "Aliens" || b.state.LastSearchQuery != "Aliens" {
 		t.Fatalf("state %+v cmd %+v", b.state, cmd)
 	}
 	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdPos}, "")
 	if note != "" || cmd.Market != "Aliens" || b.state.LastMarketQuery != "Aliens" {
 		t.Fatalf("inherit %+v cmd %+v", b.state, cmd)
+	}
+}
+
+func TestApplyMarketStickKeepsTypedWordsAcrossVenues(t *testing.T) {
+	b := &bot{state: &alert.State{}}
+	cmd, note := b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB, Market: "South Carolina Senate"}, "")
+	if note != "" || cmd.Market != "South Carolina Senate" || b.state.LastSearchQuery != "South Carolina Senate" {
+		t.Fatalf("named %+v note %q state %+v", cmd, note, b.state)
+	}
+	url := "https://polymarket.com/event/south-carolina-senate-2026/will-the-democrats-win-the-south-carolina-senate-race-in-2026"
+	b.state.RememberSent(9, "ob", url)
+	if b.state.LastSearchQuery != "South Carolina Senate" || b.state.LastMarketQuery != url {
+		t.Fatalf("after /ob reply %+v", b.state)
+	}
+	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOBP}, "")
+	if note != "" || cmd.Market != "South Carolina Senate" {
+		t.Fatalf("/obp cmd=%q note %q", cmd.Market, note)
+	}
+	b.state.RememberSent(10, "obp", "SC_SENATE_2026.DEM")
+	cmd, note = b.applyMarketStick(alert.ParsedCommand{Cmd: alert.CmdOB}, "")
+	if note != "" || cmd.Market != "South Carolina Senate" {
+		t.Fatalf("/ob after pascal cmd=%q note %q state %+v", cmd.Market, note, b.state)
 	}
 }
 

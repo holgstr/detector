@@ -2,6 +2,19 @@ package venuequery
 
 import "testing"
 
+func TestSubjectQueryUsesPolymarketEventSlug(t *testing.T) {
+	got := SubjectQuery("https://polymarket.com/event/south-carolina-senate-2026/will-the-democrats-win-the-south-carolina-senate-race-in-2026")
+	if got != "south carolina senate 2026" {
+		t.Fatalf("url %q", got)
+	}
+	if got := SearchQuery(got); got != "south carolina senate" {
+		t.Fatalf("search from slug %q", got)
+	}
+	if got := SubjectQuery("South Carolina Senate"); got != "South Carolina Senate" {
+		t.Fatalf("words %q", got)
+	}
+}
+
 func TestSearchQueryDropsQuestionAndParty(t *testing.T) {
 	got := SearchQuery("Will the Republicans win the Nevada governor race")
 	if got != "nevada governor" {

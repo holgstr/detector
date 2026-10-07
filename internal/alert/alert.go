@@ -48,9 +48,14 @@ type State struct {
 	LastOBQuery string `json:"last_ob_query,omitempty"`
 	// LastOBCmd is retained so older state files still decode. It is unused.
 	LastOBCmd string `json:"last_ob_cmd,omitempty"`
-	// LastMarketQuery is the market text from the latest command that named one.
-	// A later command that needs a market and omits it reuses this.
+	// LastMarketQuery is the precise market from the latest command that named
+	// one: a Polymarket URL after /ob, or the words when that reply has no
+	// separate id. A later command on the same venue reuses it.
 	LastMarketQuery string `json:"last_market_query,omitempty"`
+	// LastSearchQuery is the words the user typed ("South Carolina Senate").
+	// /ob then /obp, and /obp then /ob, reuse this so the other venue is not
+	// handed a Polymarket URL or a Pascal symbol.
+	LastSearchQuery string `json:"last_search_query,omitempty"`
 	// LastMarketCmd is the last /pos, /holders, /ob, /obp, or /obk. /other repeats it.
 	LastMarketCmd string `json:"last_market_cmd,omitempty"`
 	// SentMarkets remembers recent outbound message ids so a reply to an older

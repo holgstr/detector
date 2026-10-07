@@ -76,6 +76,7 @@ func resolvePascalMarkets(ctx context.Context, api pascalBookAPI, query string) 
 		}
 	}
 
+	query = venuequery.SubjectQuery(query)
 	if utf8.RuneCountInString(query) < 3 {
 		return nil, fmt.Errorf("short query")
 	}
