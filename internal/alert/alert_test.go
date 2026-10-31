@@ -3,6 +3,7 @@ package alert
 import (
 	"context"
 	"errors"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -320,10 +321,26 @@ func TestFormatIncludesNetPosition(t *testing.T) {
 		HasPosition:     true,
 		PositionSize:    27500,
 		PositionOutcome: "YES",
+		HasPositionAvg:  true,
+		PositionAvg:     0.43,
 	})
-	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?\nPosition: 27.5k YES"
+	want := "SnowLover7 BUY NO 32k @ 32c\nFed decision in September?\nPosition: 27.5k YES @ 43c"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	noAvg := Format(Alert{
+		Name:            "SnowLover7",
+		Side:            "BUY",
+		Outcome:         "No",
+		Size:            32000,
+		Price:           0.32,
+		Title:           "Fed decision in September?",
+		HasPosition:     true,
+		PositionSize:    27500,
+		PositionOutcome: "YES",
+	})
+	if strings.HasSuffix(noAvg, "@") || strings.Contains(noAvg, "YES @") {
+		t.Fatalf("missing avg should stay size-only:\n%s", noAvg)
 	}
 	flat := Format(Alert{
 		Name:        "A",
@@ -358,15 +375,19 @@ func TestAttachNetPositions(t *testing.T) {
 	}
 	api := fakePositions{
 		"0xaaa|0xabc": {
-			{Outcome: "Yes", Size: 100000},
-			{Outcome: "No", Size: 72500},
+			{Outcome: "Yes", Size: 100000, AvgPrice: 0.50},
+			{Outcome: "No", Size: 72500, AvgPrice: 0.40},
 		},
 	}
 	AttachNetPositions(context.Background(), api, alerts)
-	if !alerts[0].HasPosition || alerts[0].PositionSize != 27500 || alerts[0].PositionOutcome != "YES" {
+	// leftover 27.5k YES; (50000+29000-72500)/27500 = 0.2363…
+	if !alerts[0].HasPosition || alerts[0].PositionSize != 27500 || alerts[0].PositionOutcome != "YES" || !alerts[0].HasPositionAvg {
 		t.Fatalf("first=%+v", alerts[0])
 	}
-	if alerts[1].PositionSize != 27500 {
+	if math.Abs(alerts[0].PositionAvg-6500.0/27500) > 1e-9 {
+		t.Fatalf("avg %v", alerts[0].PositionAvg)
+	}
+	if alerts[1].PositionSize != 27500 || !alerts[1].HasPositionAvg || alerts[1].PositionAvg != alerts[0].PositionAvg {
 		t.Fatalf("cache miss on second: %+v", alerts[1])
 	}
 	if alerts[2].HasPosition {
@@ -374,6 +395,36 @@ func TestAttachNetPositions(t *testing.T) {
 	}
 	if alerts[3].HasPosition {
 		t.Fatal("empty wallet should skip")
+	}
+}
+
+func TestNetAcquisition(t *testing.T) {
+	// 100 Yes @ 0.60 + 40 No @ 0.40 → leftover 60 Yes at (60+16-40)/60 = 0.60
+	avg, ok := netAcquisition([]polymarket.Position{
+		{Outcome: "Yes", Size: 100, AvgPrice: 0.60},
+		{Outcome: "No", Size: 40, AvgPrice: 0.40},
+	})
+	if !ok || math.Abs(avg-0.60) > 1e-9 {
+		t.Fatalf("yes net avg=%v ok=%v", avg, ok)
+	}
+	avg, ok = netAcquisition([]polymarket.Position{
+		{Outcome: "Yes", Size: 100},
+		{Outcome: "No", Size: 40},
+	})
+	if ok {
+		t.Fatalf("no prices should omit avg, got %v", avg)
+	}
+	avg, ok = netAcquisition([]polymarket.Position{
+		{Outcome: "Kamala", Size: 12, AvgPrice: 0.43},
+	})
+	if !ok || math.Abs(avg-0.43) > 1e-9 {
+		t.Fatalf("other avg=%v ok=%v", avg, ok)
+	}
+	if _, ok := netAcquisition([]polymarket.Position{
+		{Outcome: "Yes", Size: 50, AvgPrice: 0.4},
+		{Outcome: "No", Size: 50, AvgPrice: 0.6},
+	}); ok {
+		t.Fatal("flat net has no acquisition")
 	}
 }
 

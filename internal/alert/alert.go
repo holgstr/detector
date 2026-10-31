@@ -150,6 +150,9 @@ type Alert struct {
 	HasPosition     bool
 	PositionSize    float64
 	PositionOutcome string
+	// PositionAvg is the merge-adjusted acquisition of that net, when known.
+	HasPositionAvg bool
+	PositionAvg    float64
 }
 
 type sportsLookup interface {
@@ -452,7 +455,7 @@ func displayName(a polymarket.Activity) string {
 //
 //	Name BUY NO 32k @ 32c
 //	Market Name
-//	Position: 27.5k YES
+//	Position: 27.5k YES @ 43c
 func Format(a Alert) string {
 	side := a.Side
 	if side == "" {
@@ -476,16 +479,17 @@ func Format(a Alert) string {
 		title,
 	)
 	if a.HasPosition {
-		body += "\n" + formatPosition(a.PositionSize, a.PositionOutcome)
+		body += "\n" + formatPosition(a.PositionSize, a.PositionOutcome, a.HasPositionAvg, a.PositionAvg)
 	}
 	return body
 }
 
-func formatPosition(size float64, outcome string) string {
+func formatPosition(size float64, outcome string, hasAvg bool, avg float64) string {
 	if size == 0 || strings.TrimSpace(outcome) == "" {
 		return "Position: 0"
 	}
-	return fmt.Sprintf("Position: %s %s", formatShares(size), strings.ToUpper(strings.TrimSpace(outcome)))
+	line := fmt.Sprintf("Position: %s %s", formatShares(size), strings.ToUpper(strings.TrimSpace(outcome)))
+	return line + formatAtPrice(hasAvg, avg)
 }
 
 // AttachNetPositions fills each alert's net Yes/No (or other) holding for
@@ -496,7 +500,12 @@ func AttachNetPositions(ctx context.Context, api positionLookup, alerts []Alert)
 		return
 	}
 	type key struct{ wallet, market string }
-	cache := make(map[key]polymarket.NetPosition)
+	type held struct {
+		np     polymarket.NetPosition
+		avg    float64
+		hasAvg bool
+	}
+	cache := make(map[key]held)
 	failed := make(map[key]struct{})
 	for i := range alerts {
 		k := key{
@@ -509,7 +518,7 @@ func AttachNetPositions(ctx context.Context, api positionLookup, alerts []Alert)
 		if _, ok := failed[k]; ok {
 			continue
 		}
-		np, ok := cache[k]
+		h, ok := cache[k]
 		if !ok {
 			pos, err := api.FetchPositions(ctx, polymarket.FetchPositionsOptions{
 				User:   k.wallet,
@@ -519,16 +528,65 @@ func AttachNetPositions(ctx context.Context, api positionLookup, alerts []Alert)
 				failed[k] = struct{}{}
 				continue
 			}
-			np = polymarket.NetShares(pos)
-			cache[k] = np
+			h.np = polymarket.NetShares(pos)
+			h.avg, h.hasAvg = netAcquisition(pos)
+			cache[k] = h
 		}
-		if !np.Known {
+		if !h.np.Known {
 			continue
 		}
 		alerts[i].HasPosition = true
-		alerts[i].PositionSize = np.Size
-		alerts[i].PositionOutcome = np.Outcome
+		alerts[i].PositionSize = h.np.Size
+		alerts[i].PositionOutcome = h.np.Outcome
+		alerts[i].HasPositionAvg = h.hasAvg
+		alerts[i].PositionAvg = h.avg
 	}
+}
+
+// netAcquisition is the merge-adjusted cost of the same net NetShares reports
+// (No @ p counts as selling Yes @ 1−p). A missing price leaves ok false.
+func netAcquisition(positions []polymarket.Position) (float64, bool) {
+	var yes, no, yesCash, noCash float64
+	var hasYesPx, hasNoPx bool
+	var otherSize, otherCash float64
+	var otherHasPx bool
+	for _, p := range positions {
+		switch parseYesNo(p.Outcome) {
+		case "yes":
+			yes += p.Size
+			if p.AvgPrice != 0 {
+				yesCash += p.Size * p.AvgPrice
+				hasYesPx = true
+			}
+		case "no":
+			no += p.Size
+			if p.AvgPrice != 0 {
+				noCash += p.Size * p.AvgPrice
+				hasNoPx = true
+			}
+		default:
+			if p.Size > otherSize {
+				otherSize = p.Size
+				otherCash = 0
+				otherHasPx = false
+				if p.AvgPrice != 0 {
+					otherCash = p.Size * p.AvgPrice
+					otherHasPx = true
+				}
+			}
+		}
+	}
+	if yes-no != 0 {
+		avg, ok := effectiveNetAvg(yes, no, yesCash, noCash)
+		if ok && (hasYesPx || hasNoPx) {
+			return avg, true
+		}
+		return 0, false
+	}
+	if otherSize > 0 && otherHasPx {
+		return otherCash / otherSize, true
+	}
+	return 0, false
 }
 
 // formatShares is Activity-tab style: 1.4k / 32k above 1000, else a short raw count.
