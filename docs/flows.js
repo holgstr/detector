@@ -1,12 +1,11 @@
-/* Taker-flow tab — aggressor fills from data-api /trades (takerOnly=true).
+/* Taker-flow tab — aggressor fills from data-api /v2/trades (taker_only=true).
  * Rank markets like the Markets tab, but by USDC taken off the book (and
  * order count) over the last 24h or 48h.
  */
 (function () {
-  const DATA = "https://data-api.polymarket.com";
+  const DATA = window.DetectorData.base;
   const FLOW_CONCURRENCY = 4;
   const TRADE_PAGE = 500;
-  const MAX_TRADE_OFFSET = 10000;
   const MAX_TRADE_PAGES = 40;
   const COLS = 8;
 
@@ -182,52 +181,43 @@
     const cat = catalog();
     const out = [];
     const seen = new Set();
-    let endSec = 0;
-    let offset = 0;
+    let cursor = "";
     let truncated = false;
 
+    // Condition feeds ignore start/end and are newest-first, so the window
+    // is applied here while following pagination.next_cursor.
     for (let page = 0; page < MAX_TRADE_PAGES; page++) {
       const q = new URLSearchParams({
-        market: conditionId,
-        takerOnly: "true",
-        start: String(startSec),
+        condition: conditionId,
+        taker_only: "true",
         limit: String(TRADE_PAGE),
-        offset: String(offset),
       });
-      if (endSec > 0) q.set("end", String(endSec));
-      const trades = await cat.getJSON(`${DATA}/trades?${q}`, signal);
-      if (!Array.isArray(trades) || !trades.length) {
+      if (cursor) q.set("cursor", cursor);
+      const body = await cat.getJSON(`${DATA}/trades?${q}`, signal);
+      const { rows, next } = window.DetectorData.page(body);
+      const trades = rows.map(window.DetectorData.trade);
+      if (!trades.length) {
         return { trades: out, truncated };
       }
 
-      let added = 0;
+      let passedStart = false;
       for (const t of trades) {
         const ts = Number(t.timestamp) || 0;
-        if (ts < startSec) continue;
+        if (ts < startSec) {
+          passedStart = true;
+          continue;
+        }
         const id = tradeKey(t);
         if (seen.has(id)) continue;
         seen.add(id);
         out.push(t);
-        added += 1;
       }
 
       const last = Number(trades[trades.length - 1].timestamp) || 0;
-      if (trades.length < TRADE_PAGE || last < startSec) {
+      if (passedStart || !next || last < startSec) {
         return { trades: out, truncated };
       }
-      if (added === 0) {
-        if (last <= 1 || last - 1 < startSec) return { trades: out, truncated };
-        endSec = last - 1;
-        offset = 0;
-        continue;
-      }
-
-      offset += TRADE_PAGE;
-      if (offset + TRADE_PAGE > MAX_TRADE_OFFSET) {
-        if (last <= startSec) return { trades: out, truncated };
-        endSec = last;
-        offset = 0;
-      }
+      cursor = next;
     }
     truncated = true;
     return { trades: out, truncated };

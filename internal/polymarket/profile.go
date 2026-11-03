@@ -53,27 +53,13 @@ func (c *Client) clobAPI() string {
 	return clobBase
 }
 
-// SearchUsers finds leaderboard profiles whose username matches query.
+// SearchUsers finds public profiles whose username matches query.
 // Identity is always the proxy wallet; names are only a lookup key.
+// Data API v2's leaderboard no longer searches by username.
 func (c *Client) SearchUsers(ctx context.Context, query string) ([]UserProfile, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("empty user query")
-	}
-
-	u := fmt.Sprintf(
-		"%s/v1/leaderboard?userName=%s&timePeriod=ALL&orderBy=PNL&limit=%d&category=OVERALL",
-		c.dataAPI(),
-		url.QueryEscape(query),
-		defaultUserSearchLimit,
-	)
-	var entries []leaderboardEntry
-	if err := c.getJSON(ctx, u, &entries); err != nil {
-		return nil, err
-	}
-	out := profilesFromLeaderboard(entries)
-	if len(out) > 0 {
-		return out, nil
 	}
 
 	q := url.Values{}
@@ -110,19 +96,18 @@ func (c *Client) FetchProfile(ctx context.Context, address string) (UserProfile,
 	}
 
 	lb := fmt.Sprintf(
-		"%s/v1/leaderboard?user=%s&timePeriod=ALL&orderBy=PNL&limit=1&category=OVERALL",
+		"%s/v2/leaderboard?user=%s&time_period=all",
 		c.dataAPI(),
 		url.QueryEscape(addr),
 	)
-	var entries []leaderboardEntry
-	if err := c.getJSON(ctx, lb, &entries); err != nil {
+	var env struct {
+		Data *leaderboardEntry `json:"data"`
+	}
+	if err := c.getJSON(ctx, lb, &env); err != nil || env.Data == nil {
 		return UserProfile{Address: addr}, nil
 	}
-	if len(entries) == 0 {
-		return UserProfile{Address: addr}, nil
-	}
-	name := strings.TrimSpace(entries[0].UserName)
-	got := strings.ToLower(strings.TrimSpace(entries[0].ProxyWallet))
+	name := strings.TrimSpace(env.Data.UserName)
+	got := strings.ToLower(strings.TrimSpace(env.Data.ProxyWallet))
 	if got == "" {
 		got = addr
 	}
@@ -201,23 +186,6 @@ func PickUsers(query string, hits []UserProfile) []UserProfile {
 	default:
 		return contain
 	}
-}
-
-func profilesFromLeaderboard(entries []leaderboardEntry) []UserProfile {
-	out := make([]UserProfile, 0, len(entries))
-	seen := make(map[string]struct{})
-	for _, e := range entries {
-		addr := strings.ToLower(strings.TrimSpace(e.ProxyWallet))
-		if addr == "" {
-			continue
-		}
-		if _, ok := seen[addr]; ok {
-			continue
-		}
-		seen[addr] = struct{}{}
-		out = append(out, UserProfile{Address: addr, Name: strings.TrimSpace(e.UserName)})
-	}
-	return out
 }
 
 func profilesFromSearch(rows []publicSearchProfile) []UserProfile {

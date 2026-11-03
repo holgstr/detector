@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	portPageSize  = 500
-	portMaxOffset = 5000
-	portMinUSD    = 100
+	portPageSize = 500
+	portMaxPages = 10
+	portMinUSD   = 100
 )
 
 // PortHolding is one market's leftover net for /port.
@@ -313,70 +313,34 @@ func BuildPortReport(ctx context.Context, api sportsLookup, w sharps.Wallet, pos
 	}
 }
 
-func portPositionOpts(user string, offset int) polymarket.FetchPositionsOptions {
+func portPositionOpts(user, cursor string, next *string) polymarket.FetchPositionsOptions {
 	return polymarket.FetchPositionsOptions{
 		User:          user,
 		Limit:         portPageSize,
-		Offset:        offset,
-		SortBy:        "CURRENT",
+		Cursor:        cursor,
+		SortBy:        "CURRENT_VALUE",
 		SortDirection: "DESC",
+		NextCursor:    next,
 	}
 }
 
 func fetchAllPositions(ctx context.Context, api positionLookup, user string) ([]polymarket.Position, bool, error) {
-	first, err := api.FetchPositions(ctx, portPositionOpts(user, 0))
-	if err != nil {
-		return first, false, err
-	}
-	if len(first) < portPageSize {
-		return first, false, nil
-	}
-
-	type slot struct {
-		offset int
-		page   []polymarket.Position
-		err    error
-	}
-	n := (portMaxOffset / portPageSize) - 1
-	ch := make(chan slot, n)
-	var wg sync.WaitGroup
-	for offset := portPageSize; offset < portMaxOffset; offset += portPageSize {
-		wg.Add(1)
-		go func(offset int) {
-			defer wg.Done()
-			page, err := api.FetchPositions(ctx, portPositionOpts(user, offset))
-			ch <- slot{offset: offset, page: page, err: err}
-		}(offset)
-	}
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
-	byOff := make(map[int][]polymarket.Position, n)
-	var firstErr error
-	for s := range ch {
-		if s.err != nil {
-			if firstErr == nil {
-				firstErr = s.err
-			}
-			continue
+	cursor := ""
+	var all []polymarket.Position
+	for page := 0; page < portMaxPages; page++ {
+		var next string
+		rows, err := api.FetchPositions(ctx, portPositionOpts(user, cursor, &next))
+		if err != nil {
+			return all, false, err
 		}
-		byOff[s.offset] = s.page
-	}
-
-	all := append([]polymarket.Position{}, first...)
-	for offset := portPageSize; offset < portMaxOffset; offset += portPageSize {
-		page, ok := byOff[offset]
-		if !ok {
-			return all, false, firstErr
+		all = append(all, rows...)
+		// v2 ends on an empty next_cursor. A short page can still continue.
+		if len(rows) == 0 || next == "" || next == cursor {
+			return all, false, nil
 		}
-		all = append(all, page...)
-		if len(page) < portPageSize {
-			return all, false, firstErr
-		}
+		cursor = next
 	}
-	return all, true, firstErr
+	return all, true, nil
 }
 
 // FetchPortReport loads one wallet's open positions and builds /port.

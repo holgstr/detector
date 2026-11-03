@@ -20,12 +20,15 @@ func TestFetchPositionsRequiresUser(t *testing.T) {
 func TestFetchPositionsQuery(t *testing.T) {
 	var got url.Values
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/positions" {
+		if r.URL.Path != "/v2/positions" {
 			t.Errorf("path=%s", r.URL.Path)
 		}
 		got = r.URL.Query()
-		_ = json.NewEncoder(w).Encode([]Position{
-			{ProxyWallet: "0xaaa", ConditionID: "0xabc", Outcome: "Yes", Size: 10},
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []positionWire{{
+				ProxyWallet: "0xaaa", ConditionID: "0xabc", Outcome: "Yes", CurrentSize: 10,
+			}},
+			"pagination": pagination{HasMore: false},
 		})
 	}))
 	t.Cleanup(ts.Close)
@@ -45,9 +48,13 @@ func TestFetchPositionsQuery(t *testing.T) {
 	if len(pos) != 1 {
 		t.Fatalf("got %d", len(pos))
 	}
-	if got.Get("user") != "0xAAA" || got.Get("market") != "0xabc" ||
-		got.Get("limit") != "20" || got.Get("sizeThreshold") != "0" {
+	if got.Get("user") != "0xAAA" || got.Get("condition") != "0xabc" ||
+		got.Get("limit") != "20" || got.Get("filter_type") != "TOKENS" || got.Get("filter_amount") != "0" ||
+		got.Get("market") != "" || got.Get("offset") != "" {
 		t.Fatalf("query=%s", got.Encode())
+	}
+	if pos[0].Size != 10 || pos[0].Outcome != "Yes" || pos[0].ConditionID != "0xabc" {
+		t.Fatalf("%+v", pos[0])
 	}
 }
 
@@ -55,7 +62,10 @@ func TestFetchPositionsSortBy(t *testing.T) {
 	var got url.Values
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.URL.Query()
-		_ = json.NewEncoder(w).Encode([]Position{})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":       []positionWire{},
+			"pagination": pagination{},
+		})
 	}))
 	t.Cleanup(ts.Close)
 
@@ -72,16 +82,20 @@ func TestFetchPositionsSortBy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Get("sortBy") != "CURRENT" || got.Get("sortDirection") != "DESC" {
+	if got.Get("sort_by") != "CURRENT_VALUE" || got.Get("sort_direction") != "DESC" {
 		t.Fatalf("query=%s", got.Encode())
 	}
 }
 
-func TestFetchPositionsOffset(t *testing.T) {
+func TestFetchPositionsCursor(t *testing.T) {
 	var got url.Values
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.URL.Query()
-		_ = json.NewEncoder(w).Encode([]Position{})
+		next := "page-2"
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":       []positionWire{},
+			"pagination": pagination{HasMore: true, NextCursor: &next},
+		})
 	}))
 	t.Cleanup(ts.Close)
 
@@ -89,16 +103,21 @@ func TestFetchPositionsOffset(t *testing.T) {
 	c.HTTP = ts.Client()
 	c.HTTP.Transport = rewriteHost(ts.URL)
 
+	var next string
 	_, err := c.FetchPositions(context.Background(), FetchPositionsOptions{
-		User:   "0xAAA",
-		Limit:  500,
-		Offset: 500,
+		User:       "0xAAA",
+		Limit:      500,
+		Cursor:     "page-1",
+		NextCursor: &next,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Get("offset") != "500" || got.Get("limit") != "500" {
+	if got.Get("cursor") != "page-1" || got.Get("offset") != "" || got.Get("limit") != "500" {
 		t.Fatalf("query=%s", got.Encode())
+	}
+	if next != "page-2" {
+		t.Fatalf("next=%q", next)
 	}
 }
 

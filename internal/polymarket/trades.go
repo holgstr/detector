@@ -10,11 +10,10 @@ import (
 
 const (
 	defaultTradePage = 500
-	maxTradeOffset   = 10000
 	maxTradePages    = 40
 )
 
-// Trade is one Data API fill. With takerOnly=true (the API default),
+// Trade is one Data API fill. With taker_only=true (the API default),
 // proxyWallet is the aggressor who hit the book.
 type Trade struct {
 	ProxyWallet     string  `json:"proxyWallet"`
@@ -54,8 +53,10 @@ func (c *Client) FetchTakerTrades(ctx context.Context, market string, start, end
 	})
 }
 
-// FetchTrades pages the Data API /trades endpoint, sliding the start/end
-// window when offset would pass the API's 10k cap.
+// FetchTrades pages Data API /v2/trades with a cursor.
+// start/end are honored by the API only for a user-anchored feed. This call
+// is condition-anchored, so rows outside [Start, End] are dropped locally.
+// The feed is newest-first.
 func (c *Client) FetchTrades(ctx context.Context, opt FetchTradesOptions) ([]Trade, bool, error) {
 	if strings.TrimSpace(opt.Market) == "" {
 		return nil, false, fmt.Errorf("market condition id required")
@@ -64,43 +65,46 @@ func (c *Client) FetchTrades(ctx context.Context, opt FetchTradesOptions) ([]Tra
 	if pageSize <= 0 {
 		pageSize = defaultTradePage
 	}
-	if pageSize > defaultTradePage {
-		pageSize = defaultTradePage
+	if pageSize > 1000 {
+		pageSize = 1000
 	}
 
 	out := make([]Trade, 0, pageSize)
 	seen := make(map[string]struct{}, pageSize)
-	end := opt.End
-	offset := 0
+	cursor := ""
 
 	for page := 0; page < maxTradePages; page++ {
 		q := url.Values{}
-		q.Set("market", opt.Market)
+		q.Set("condition", opt.Market)
 		if opt.IncludeMakers {
-			q.Set("takerOnly", "false")
+			q.Set("taker_only", "false")
 		} else {
-			q.Set("takerOnly", "true")
+			q.Set("taker_only", "true")
 		}
 		q.Set("limit", strconv.Itoa(pageSize))
-		q.Set("offset", strconv.Itoa(offset))
-		if opt.Start > 0 {
-			q.Set("start", strconv.FormatInt(opt.Start, 10))
-		}
-		if end > 0 {
-			q.Set("end", strconv.FormatInt(end, 10))
+		if cursor != "" {
+			q.Set("cursor", cursor)
 		}
 
-		var pageTrades []Trade
-		if err := c.getJSON(ctx, dataBase+"/trades?"+q.Encode(), &pageTrades); err != nil {
+		var body struct {
+			Data       []tradeWire `json:"data"`
+			Pagination pagination  `json:"pagination"`
+		}
+		if err := c.getJSON(ctx, c.dataAPI()+"/v2/trades?"+q.Encode(), &body); err != nil {
 			return out, false, err
 		}
-		if len(pageTrades) == 0 {
+		if len(body.Data) == 0 {
 			return out, false, nil
 		}
 
-		added := 0
-		for _, t := range pageTrades {
+		passedStart := false
+		for _, row := range body.Data {
+			t := row.trade()
+			if opt.End > 0 && t.Timestamp > opt.End {
+				continue
+			}
 			if opt.Start > 0 && t.Timestamp < opt.Start {
+				passedStart = true
 				continue
 			}
 			id := tradeKey(t)
@@ -109,32 +113,14 @@ func (c *Client) FetchTrades(ctx context.Context, opt FetchTradesOptions) ([]Tra
 			}
 			seen[id] = struct{}{}
 			out = append(out, t)
-			added++
 		}
 
-		last := pageTrades[len(pageTrades)-1].Timestamp
-		if len(pageTrades) < pageSize || (opt.Start > 0 && last < opt.Start) {
+		next := body.Pagination.next()
+		last := body.Data[len(body.Data)-1].Timestamp
+		if next == "" || passedStart || (opt.Start > 0 && last < opt.Start) {
 			return out, false, nil
 		}
-
-		if added == 0 {
-			// Window slide landed on an already-seen second; nudge back 1s.
-			if last <= 1 || (opt.Start > 0 && last-1 < opt.Start) {
-				return out, false, nil
-			}
-			end = last - 1
-			offset = 0
-			continue
-		}
-
-		offset += pageSize
-		if offset+pageSize > maxTradeOffset {
-			if opt.Start > 0 && last <= opt.Start {
-				return out, false, nil
-			}
-			end = last
-			offset = 0
-		}
+		cursor = next
 	}
 	return out, true, nil
 }

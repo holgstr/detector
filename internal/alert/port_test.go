@@ -3,6 +3,7 @@ package alert
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -176,13 +177,23 @@ func (f fakePortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPosit
 		return nil, f.err
 	}
 	rows := f.pos[strings.ToLower(opt.User)]
-	start := opt.Offset
+	start := 0
+	if opt.Cursor != "" {
+		n, err := strconv.Atoi(opt.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		start = n
+	}
 	if start >= len(rows) {
 		return nil, nil
 	}
 	end := start + opt.Limit
 	if opt.Limit <= 0 || end > len(rows) {
 		end = len(rows)
+	}
+	if opt.NextCursor != nil && end < len(rows) {
+		*opt.NextCursor = strconv.Itoa(end)
 	}
 	return rows[start:end], nil
 }
@@ -212,24 +223,34 @@ func TestFetchPortReport(t *testing.T) {
 type pagingPortAPI struct {
 	mu      sync.Mutex
 	rows    []polymarket.Position
-	offsets []int
+	cursors []string
 	sortBy  string
 	sortDir string
 }
 
 func (p *pagingPortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
 	p.mu.Lock()
-	p.offsets = append(p.offsets, opt.Offset)
+	p.cursors = append(p.cursors, opt.Cursor)
 	p.sortBy = opt.SortBy
 	p.sortDir = opt.SortDirection
 	p.mu.Unlock()
-	start := opt.Offset
+	start := 0
+	if opt.Cursor != "" {
+		n, err := strconv.Atoi(opt.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		start = n
+	}
 	if start >= len(p.rows) {
 		return nil, nil
 	}
 	end := start + opt.Limit
 	if opt.Limit <= 0 || end > len(p.rows) {
 		end = len(p.rows)
+	}
+	if opt.NextCursor != nil && end < len(p.rows) {
+		*opt.NextCursor = strconv.Itoa(end)
 	}
 	out := make([]polymarket.Position, end-start)
 	copy(out, p.rows[start:end])
@@ -253,15 +274,15 @@ func TestFetchPortReportOnePage(t *testing.T) {
 	if len(r.Holdings) != 1 {
 		t.Fatalf("%+v", r)
 	}
-	if len(api.offsets) != 1 || api.offsets[0] != 0 {
-		t.Fatalf("offsets=%v (small books should be one request)", api.offsets)
+	if len(api.cursors) != 1 || api.cursors[0] != "" {
+		t.Fatalf("cursors=%v (small books should be one request)", api.cursors)
 	}
-	if api.sortBy != "CURRENT" || api.sortDir != "DESC" {
+	if api.sortBy != "CURRENT_VALUE" || api.sortDir != "DESC" {
 		t.Fatalf("sort %s %s", api.sortBy, api.sortDir)
 	}
 }
 
-func TestFetchPortReportPagesInParallel(t *testing.T) {
+func TestFetchPortReportFollowsCursor(t *testing.T) {
 	rows := make([]polymarket.Position, portPageSize+150)
 	for i := range rows {
 		rows[i] = polymarket.Position{
@@ -283,20 +304,8 @@ func TestFetchPortReportPagesInParallel(t *testing.T) {
 	if r.Truncated {
 		t.Fatal("short last page should not truncate")
 	}
-	got := map[int]int{}
-	for _, off := range api.offsets {
-		got[off]++
-	}
-	if got[0] != 1 {
-		t.Fatalf("first page calls=%d offsets=%v", got[0], api.offsets)
-	}
-	for off := portPageSize; off < portMaxOffset; off += portPageSize {
-		if got[off] != 1 {
-			t.Fatalf("missing parallel page %d: %v", off, api.offsets)
-		}
-	}
-	if len(api.offsets) != portMaxOffset/portPageSize {
-		t.Fatalf("want %d page fetches, got %d %v", portMaxOffset/portPageSize, len(api.offsets), api.offsets)
+	if len(api.cursors) != 2 || api.cursors[0] != "" || api.cursors[1] != strconv.Itoa(portPageSize) {
+		t.Fatalf("cursors=%v", api.cursors)
 	}
 }
 
@@ -305,11 +314,14 @@ type fullBookPortAPI struct {
 }
 
 func (f *fullBookPortAPI) FetchPositions(_ context.Context, opt polymarket.FetchPositionsOptions) ([]polymarket.Position, error) {
-	f.calls.Add(1)
+	n := int(f.calls.Add(1))
+	if opt.NextCursor != nil {
+		*opt.NextCursor = strconv.Itoa(n)
+	}
 	out := make([]polymarket.Position, portPageSize)
 	for i := range out {
 		out[i] = polymarket.Position{
-			ConditionID: fmt.Sprintf("%d-%d", opt.Offset, i),
+			ConditionID: fmt.Sprintf("%d-%d", n, i),
 			Title:       "M",
 			Outcome:     "Yes",
 			Size:        400,
@@ -332,10 +344,10 @@ func TestFetchPortReportTruncated(t *testing.T) {
 	if !r.Truncated {
 		t.Fatal("expected truncated")
 	}
-	if len(r.Holdings) != portMaxOffset {
+	if len(r.Holdings) != portPageSize*portMaxPages {
 		t.Fatalf("holdings=%d", len(r.Holdings))
 	}
-	if api.calls.Load() != int32(portMaxOffset/portPageSize) {
+	if api.calls.Load() != int32(portMaxPages) {
 		t.Fatalf("calls=%d", api.calls.Load())
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 const (
 	holdersPerSide     = 10
-	holdersLookupLimit = 20 // data-api /holders cap; extras cover nets that drop a wallet off one side
+	holdersLookupLimit = 20 // top holders per side; extras cover nets that drop a wallet off one side
 	// walletLabelRunes is how much of an unnamed 0x address to show before "...".
 	walletLabelRunes = 7
 )

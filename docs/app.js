@@ -1,5 +1,5 @@
 const GAMMA = "https://gamma-api.polymarket.com";
-const DATA = "https://data-api.polymarket.com";
+const DATA = window.DetectorData.base;
 const MIN_PNL = 100_000;
 const HOLDERS_LIMIT = 20;
 const STRENGTH_CONCURRENCY = 4;
@@ -169,21 +169,19 @@ async function mapPool(items, concurrency, fn, signal) {
 async function lifetimePnL(wallet, signal) {
   const q = new URLSearchParams({
     user: wallet,
-    timePeriod: "ALL",
-    orderBy: "PNL",
-    limit: "1",
-    category: "OVERALL",
+    time_period: "all",
   });
-  const entries = await getJSON(`${DATA}/v1/leaderboard?${q}`, signal);
-  if (!entries?.length) return null;
-  return Number(entries[0].pnl);
+  const body = await getJSON(`${DATA}/leaderboard?${q}`, signal);
+  const entry = window.DetectorData.leaderboardUser(body);
+  if (!entry || entry.pnl == null || Number.isNaN(Number(entry.pnl))) return null;
+  return Number(entry.pnl);
 }
 
 async function computeStrength(conditionId, signal) {
-  const groups = await getJSON(
-    `${DATA}/holders?market=${encodeURIComponent(conditionId)}&limit=${HOLDERS_LIMIT}`,
+  const groups = window.DetectorData.holders(await getJSON(
+    `${DATA}/holders?condition=${encodeURIComponent(conditionId)}&limit=${HOLDERS_LIMIT}&include_pnl=true`,
     signal,
-  );
+  ));
   /** @type {Array<{side:"yes"|"no", wallet:string, name:string, size:number}>} */
   const holders = [];
   for (const g of groups || []) {
@@ -380,11 +378,12 @@ function shareDonut(yesSize, noSize) {
 async function fetchLastTrade(wallet, conditionId, signal) {
   const q = new URLSearchParams({
     user: wallet,
-    market: conditionId,
+    condition: conditionId,
     limit: "1",
   });
-  const trades = await getJSON(`${DATA}/trades?${q}`, signal);
-  if (!Array.isArray(trades) || !trades.length) {
+  const { rows } = window.DetectorData.page(await getJSON(`${DATA}/trades?${q}`, signal));
+  const trades = rows.map(window.DetectorData.trade);
+  if (!trades.length) {
     return { side: "", size: 0, price: 0, timestamp: 0, outcome: "", status: "empty" };
   }
   const t = trades[0];
