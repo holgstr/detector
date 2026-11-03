@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,6 +94,17 @@ func prepareUpdateWith(ctx context.Context, run cmdRunner) (updateResult, error)
 }
 
 func syncRepo(ctx context.Context, root string, run cmdRunner) (from, to string, changed bool, err error) {
+	// bot.env is machine-local (token, chat id). A dirty copy must not block
+	// the fast-forward, and a pull must not replace it.
+	restoreEnv, err := parkLocalBotEnv(ctx, root)
+	if err != nil {
+		return "", "", false, err
+	}
+	defer func() {
+		if rerr := restoreEnv(); rerr != nil && err == nil {
+			err = rerr
+		}
+	}()
 	if err := assertCleanForUpdate(ctx, root, run); err != nil {
 		return "", "", false, err
 	}
@@ -225,6 +238,8 @@ func isUpdateNoise(path string) bool {
 	switch {
 	case path == "bot.log", strings.HasPrefix(path, "bot.log."):
 		return true
+	case path == "bot.env", path == "./bot.env":
+		return true
 	case path == "data", strings.HasPrefix(path, "data/"):
 		return true
 	case path == "bin", strings.HasPrefix(path, "bin/"):
@@ -234,6 +249,100 @@ func isUpdateNoise(path string) bool {
 	default:
 		return false
 	}
+}
+
+// parkLocalBotEnv takes a local bot.env out of git's way when it differs
+// from HEAD (untracked, or edited). The returned func writes those bytes
+// back so /update keeps the machine's secrets.
+func parkLocalBotEnv(ctx context.Context, root string) (func() error, error) {
+	nop := func() error { return nil }
+	path := filepath.Join(root, "bot.env")
+	local, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nop, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	mode := info.Mode().Perm()
+	if mode == 0 {
+		mode = 0o600
+	}
+
+	inHead, err := gitPathInHead(ctx, root, "bot.env")
+	if err != nil {
+		return nil, err
+	}
+	if inHead {
+		head, err := gitShow(ctx, root, "HEAD:bot.env")
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Equal(local, head) {
+			return nop, nil
+		}
+		if err := gitRun(ctx, root, "checkout", "HEAD", "--", "bot.env"); err != nil {
+			return nil, fmt.Errorf("reset bot.env: %w", err)
+		}
+	} else {
+		if err := gitRun(ctx, root, "rm", "-f", "--cached", "--ignore-unmatch", "--", "bot.env"); err != nil {
+			return nil, fmt.Errorf("unstage bot.env: %w", err)
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return func() error {
+		return os.WriteFile(path, local, mode)
+	}, nil
+}
+
+func gitPathInHead(ctx context.Context, dir, rel string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "-e", "HEAD:"+rel)
+	cmd.Dir = dir
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return false, nil
+	}
+	return false, err
+}
+
+func gitShow(ctx context.Context, dir, spec string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "show", spec)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if s := strings.TrimSpace(string(exit.Stderr)); s != "" {
+				return nil, fmt.Errorf("%s", s)
+			}
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+func gitRun(ctx context.Context, dir string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		s := strings.TrimSpace(string(out))
+		if s == "" {
+			return err
+		}
+		return fmt.Errorf("%s", s)
+	}
+	return nil
 }
 
 func shortSHA(rev string) string {

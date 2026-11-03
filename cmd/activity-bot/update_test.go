@@ -22,7 +22,7 @@ func TestRestartArgsStripsAnnounce(t *testing.T) {
 }
 
 func TestIsUpdateNoise(t *testing.T) {
-	if !isUpdateNoise("bot.log") || !isUpdateNoise("data/activity-bot-state.json") || !isUpdateNoise("bin/activity-bot") {
+	if !isUpdateNoise("bot.log") || !isUpdateNoise("bot.env") || !isUpdateNoise("data/activity-bot-state.json") || !isUpdateNoise("bin/activity-bot") {
 		t.Fatal("expected noise paths")
 	}
 	if isUpdateNoise("cmd/activity-bot/main.go") {
@@ -92,13 +92,142 @@ func TestSyncRepoBlocksDirtySource(t *testing.T) {
 	runGit(t, dir, "commit", "-m", "init")
 	write(t, filepath.Join(dir, "main.go"), "package main\n// dirty\n")
 	write(t, filepath.Join(dir, "bot.log"), "noise\n")
+	write(t, filepath.Join(dir, "bot.env"), "TOKEN=local\n")
 
 	_, _, _, err := syncRepo(context.Background(), dir, runCmd)
 	if err == nil || !strings.Contains(err.Error(), "main.go") {
 		t.Fatalf("want dirty main.go, got %v", err)
 	}
-	if strings.Contains(err.Error(), "bot.log") {
-		t.Fatalf("bot.log should be ignored: %v", err)
+	if strings.Contains(err.Error(), "bot.log") || strings.Contains(err.Error(), "bot.env") {
+		t.Fatalf("bot.log and bot.env should be ignored: %v", err)
+	}
+	if got := readFile(t, filepath.Join(dir, "bot.env")); got != "TOKEN=local\n" {
+		t.Fatalf("bot.env = %q", got)
+	}
+}
+
+func TestSyncRepoKeepsUntrackedBotEnv(t *testing.T) {
+	gitOk(t)
+	origin := t.TempDir()
+	runGit(t, origin, "init", "-b", "main")
+	runGit(t, origin, "config", "user.email", "t@example.com")
+	runGit(t, origin, "config", "user.name", "t")
+	write(t, filepath.Join(origin, "README"), "one\n")
+	runGit(t, origin, "add", "README")
+	runGit(t, origin, "commit", "-m", "one")
+
+	work := t.TempDir()
+	runGit(t, "", "clone", origin, work)
+	write(t, filepath.Join(work, "bot.env"), "TOKEN=local\n")
+
+	write(t, filepath.Join(origin, "README"), "two\n")
+	runGit(t, origin, "add", "README")
+	runGit(t, origin, "commit", "-m", "two")
+	want := runGit(t, origin, "rev-parse", "HEAD")
+
+	_, gotTo, changed, err := syncRepo(context.Background(), work, runCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || gotTo != want {
+		t.Fatalf("to=%s changed=%v", gotTo, changed)
+	}
+	if got := readFile(t, filepath.Join(work, "bot.env")); got != "TOKEN=local\n" {
+		t.Fatalf("bot.env = %q", got)
+	}
+}
+
+func TestSyncRepoKeepsLocalBotEnvWhenUpstreamAddsIt(t *testing.T) {
+	gitOk(t)
+	origin := t.TempDir()
+	runGit(t, origin, "init", "-b", "main")
+	runGit(t, origin, "config", "user.email", "t@example.com")
+	runGit(t, origin, "config", "user.name", "t")
+	write(t, filepath.Join(origin, "README"), "one\n")
+	runGit(t, origin, "add", "README")
+	runGit(t, origin, "commit", "-m", "one")
+
+	work := t.TempDir()
+	runGit(t, "", "clone", origin, work)
+	write(t, filepath.Join(work, "bot.env"), "TOKEN=local\n")
+
+	write(t, filepath.Join(origin, "bot.env"), "TOKEN=remote\n")
+	runGit(t, origin, "add", "bot.env")
+	runGit(t, origin, "commit", "-m", "add env")
+	want := runGit(t, origin, "rev-parse", "HEAD")
+
+	_, gotTo, changed, err := syncRepo(context.Background(), work, runCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || gotTo != want {
+		t.Fatalf("to=%s changed=%v", gotTo, changed)
+	}
+	if got := readFile(t, filepath.Join(work, "bot.env")); got != "TOKEN=local\n" {
+		t.Fatalf("bot.env = %q", got)
+	}
+}
+
+func TestSyncRepoKeepsDirtyTrackedBotEnv(t *testing.T) {
+	gitOk(t)
+	origin := t.TempDir()
+	runGit(t, origin, "init", "-b", "main")
+	runGit(t, origin, "config", "user.email", "t@example.com")
+	runGit(t, origin, "config", "user.name", "t")
+	write(t, filepath.Join(origin, "README"), "one\n")
+	write(t, filepath.Join(origin, "bot.env"), "TOKEN=old\n")
+	runGit(t, origin, "add", "README", "bot.env")
+	runGit(t, origin, "commit", "-m", "one")
+
+	work := t.TempDir()
+	runGit(t, "", "clone", origin, work)
+	write(t, filepath.Join(work, "bot.env"), "TOKEN=local\n")
+
+	write(t, filepath.Join(origin, "README"), "two\n")
+	write(t, filepath.Join(origin, "bot.env"), "TOKEN=remote\n")
+	runGit(t, origin, "add", "README", "bot.env")
+	runGit(t, origin, "commit", "-m", "two")
+	want := runGit(t, origin, "rev-parse", "HEAD")
+
+	_, gotTo, changed, err := syncRepo(context.Background(), work, runCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || gotTo != want {
+		t.Fatalf("to=%s changed=%v", gotTo, changed)
+	}
+	if got := readFile(t, filepath.Join(work, "bot.env")); got != "TOKEN=local\n" {
+		t.Fatalf("bot.env = %q", got)
+	}
+}
+
+func TestSyncRepoTakesUpstreamBotEnvWhenClean(t *testing.T) {
+	gitOk(t)
+	origin := t.TempDir()
+	runGit(t, origin, "init", "-b", "main")
+	runGit(t, origin, "config", "user.email", "t@example.com")
+	runGit(t, origin, "config", "user.name", "t")
+	write(t, filepath.Join(origin, "bot.env"), "TOKEN=old\n")
+	runGit(t, origin, "add", "bot.env")
+	runGit(t, origin, "commit", "-m", "one")
+
+	work := t.TempDir()
+	runGit(t, "", "clone", origin, work)
+
+	write(t, filepath.Join(origin, "bot.env"), "TOKEN=remote\n")
+	runGit(t, origin, "add", "bot.env")
+	runGit(t, origin, "commit", "-m", "two")
+	want := runGit(t, origin, "rev-parse", "HEAD")
+
+	_, gotTo, changed, err := syncRepo(context.Background(), work, runCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || gotTo != want {
+		t.Fatalf("to=%s changed=%v", gotTo, changed)
+	}
+	if got := readFile(t, filepath.Join(work, "bot.env")); got != "TOKEN=remote\n" {
+		t.Fatalf("bot.env = %q", got)
 	}
 }
 
@@ -127,4 +256,13 @@ func write(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
