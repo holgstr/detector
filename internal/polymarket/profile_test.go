@@ -42,23 +42,23 @@ func TestPickUsersExactBeatsPrefix(t *testing.T) {
 	}
 }
 
-func TestSearchUsersLeaderboard(t *testing.T) {
+func TestSearchUsersPublicSearch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/leaderboard" {
+		if r.URL.Path != "/public-search" {
 			t.Errorf("path %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("userName") != "Flipadelphia" {
+		if r.URL.Query().Get("q") != "Flipadelphia" || r.URL.Query().Get("search_profiles") != "true" {
 			t.Errorf("query %s", r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode([]leaderboardEntry{{
+		_ = json.NewEncoder(w).Encode(publicSearchProfiles{Profiles: []publicSearchProfile{{
 			ProxyWallet: "0x448861155279dbf833d041b963e3ac854599e319",
-			UserName:    "Flipadelphia",
-		}})
+			Name:        "Flipadelphia",
+		}}})
 	}))
 	defer srv.Close()
 
 	c := NewClient()
-	c.DataBase = srv.URL
+	c.GammaBase = srv.URL
 	got, err := c.SearchUsers(context.Background(), "Flipadelphia")
 	if err != nil {
 		t.Fatal(err)

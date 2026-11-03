@@ -57,19 +57,20 @@ type OutcomeHolder struct {
 }
 
 type holdersResponse struct {
-	Token   string `json:"token"`
+	Token   string `json:"token_id"`
 	Holders []struct {
-		ProxyWallet  string  `json:"proxyWallet"`
+		ProxyWallet  string  `json:"proxy_wallet"`
 		Name         string  `json:"name"`
 		Pseudonym    string  `json:"pseudonym"`
 		Amount       float64 `json:"amount"`
-		OutcomeIndex int     `json:"outcomeIndex"`
+		OutcomeIndex int     `json:"outcome_index"`
 	} `json:"holders"`
 }
 
 type leaderboardEntry struct {
-	ProxyWallet string  `json:"proxyWallet"`
-	UserName    string  `json:"userName"`
-	PnL         float64 `json:"pnl"`
-	Vol         float64 `json:"vol"`
+	ProxyWallet  string  `json:"user_id"`
+	UserName     string  `json:"user_name"`
+	PnL          float64 `json:"pnl"`
+	Vol          float64 `json:"volume"`
+	ProfileImage string  `json:"profile_image"`
 }

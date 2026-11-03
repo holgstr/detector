@@ -17,7 +17,7 @@ import (
 func main() {
 	market := flag.String("market", "", "Polymarket URL, market slug, or condition ID (required)")
 	outPath := flag.String("out", "", "Output JSON path (default: data/holders-<slug-or-id>.json)")
-	limit := flag.Int("limit", 20, "Max holders per side (API cap 20)")
+	limit := flag.Int("limit", 20, "Max holders per side (Data API v2 cap 100)")
 	workers := flag.Int("workers", 16, "Concurrent lifetime-PnL requests")
 	timeout := flag.Duration("timeout", 60*time.Second, "Overall request timeout")
 	flag.Parse()

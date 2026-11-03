@@ -137,23 +137,30 @@ func toMarket(g gammaMarket) Market {
 }
 
 // FetchHolders returns top holders grouped by outcome token.
+// limit is per outcome token. include_pnl keeps per-side gross balances
+// (the default v2 response nets a wallet across outcomes).
 func (c *Client) FetchHolders(ctx context.Context, conditionID string, limit int) ([]holdersResponse, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 20 {
-		limit = 20
+	if limit > 100 {
+		limit = 100
 	}
-	u := fmt.Sprintf("%s/holders?market=%s&limit=%d", c.dataAPI(), url.QueryEscape(conditionID), limit)
-	var out []holdersResponse
-	if err := c.getJSON(ctx, u, &out); err != nil {
+	q := url.Values{}
+	q.Set("condition", strings.TrimSpace(conditionID))
+	q.Set("limit", strconv.Itoa(limit))
+	q.Set("include_pnl", "true")
+	var page struct {
+		Data []holdersResponse `json:"data"`
+	}
+	if err := c.getJSON(ctx, c.dataAPI()+"/v2/holders?"+q.Encode(), &page); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return page.Data, nil
 }
 
 // ListHolders returns top holders for a condition, labeled YES or NO.
-// limit is per outcome token (the data API caps this at 20).
+// limit is per outcome token (v2 allows 100 when position economics are included).
 func (c *Client) ListHolders(ctx context.Context, conditionID string, limit int) ([]OutcomeHolder, error) {
 	groups, err := c.FetchHolders(ctx, strings.TrimSpace(conditionID), limit)
 	if err != nil {
@@ -205,18 +212,20 @@ func flattenHolders(groups []holdersResponse) []OutcomeHolder {
 // ok=false means the wallet has no leaderboard entry.
 func (c *Client) FetchLifetimePnL(ctx context.Context, wallet string) (pnl float64, ok bool, err error) {
 	u := fmt.Sprintf(
-		"%s/v1/leaderboard?user=%s&timePeriod=ALL&orderBy=PNL&limit=1&category=OVERALL",
-		dataBase,
+		"%s/v2/leaderboard?user=%s&time_period=all",
+		c.dataAPI(),
 		url.QueryEscape(wallet),
 	)
-	var entries []leaderboardEntry
-	if err := c.getJSON(ctx, u, &entries); err != nil {
+	var env struct {
+		Data *leaderboardEntry `json:"data"`
+	}
+	if err := c.getJSON(ctx, u, &env); err != nil {
 		return 0, false, err
 	}
-	if len(entries) == 0 {
+	if env.Data == nil {
 		return 0, false, nil
 	}
-	return entries[0].PnL, true, nil
+	return env.Data.PnL, true, nil
 }
 
 // FetchLifetimePnLBatch fetches lifetime PnL for many wallets concurrently.

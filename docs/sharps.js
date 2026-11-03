@@ -1,8 +1,8 @@
 /* Tracked sharps — portfolio + activity tabs.
- * Data: GET /positions, /activity, /trades on data-api.polymarket.com (public).
+ * Data: GET /v2/positions, /v2/activity, /v2/trades on data-api.polymarket.com (public).
  */
 (function () {
-  const DATA = "https://data-api.polymarket.com";
+  const DATA = window.DetectorData.base;
   const GAMMA = "https://gamma-api.polymarket.com";
   const PORT_COLS = 7;
   const ACT_COLS = 8;
@@ -412,14 +412,10 @@
   async function loadProfile(wallet, signal) {
     const q = new URLSearchParams({
       user: wallet,
-      timePeriod: "ALL",
-      orderBy: "PNL",
-      limit: "1",
-      category: "OVERALL",
+      time_period: "all",
     });
     const seeded = TRACKED.find((t) => t.wallet.toLowerCase() === wallet.toLowerCase())?.name;
-    const entries = await getJSON(`${DATA}/v1/leaderboard?${q}`, signal);
-    const e = entries?.[0];
+    const e = window.DetectorData.leaderboardUser(await getJSON(`${DATA}/leaderboard?${q}`, signal));
     const name = (e?.userName || "").trim() || seeded || fmtWallet(wallet);
     const info = {
       wallet,
@@ -434,23 +430,24 @@
 
   async function fetchAllPositions(wallet, signal) {
     const out = [];
-    let offset = 0;
+    let cursor = "";
     const limit = 500;
     for (;;) {
       const q = new URLSearchParams({
         user: wallet,
-        sizeThreshold: "1",
+        filter_type: "TOKENS",
+        filter_amount: "1",
         limit: String(limit),
-        offset: String(offset),
-        sortBy: "CURRENT",
-        sortDirection: "DESC",
+        sort_by: "CURRENT_VALUE",
+        sort_direction: "DESC",
       });
-      const page = await getJSON(`${DATA}/positions?${q}`, signal);
-      if (!Array.isArray(page) || !page.length) break;
+      if (cursor) q.set("cursor", cursor);
+      const { rows, next } = window.DetectorData.page(await getJSON(`${DATA}/positions?${q}`, signal));
+      const page = rows.map(window.DetectorData.position);
+      if (!page.length) break;
       out.push(...page);
-      if (page.length < limit) break;
-      offset += limit;
-      if (offset > 5000) break;
+      if (!next || out.length >= 5000) break;
+      cursor = next;
     }
     return out;
   }
@@ -459,22 +456,21 @@
     const q = new URLSearchParams({
       user: wallet,
       limit: String(limit),
-      offset: "0",
     });
     if (type) q.set("type", type);
-    const page = await getJSON(`${DATA}/activity?${q}`, signal);
-    return Array.isArray(page) ? page : [];
+    const { rows } = window.DetectorData.page(await getJSON(`${DATA}/activity?${q}`, signal));
+    return rows.map(window.DetectorData.activity);
   }
 
   /** Last trades on a market (both Y and N) for one wallet. */
   async function fetchHolderTrades(wallet, conditionId, signal) {
     const q = new URLSearchParams({
       user: wallet,
-      market: conditionId,
+      condition: conditionId,
       limit: "3",
     });
-    const trades = await getJSON(`${DATA}/trades?${q}`, signal);
-    return Array.isArray(trades) ? trades : [];
+    const { rows } = window.DetectorData.page(await getJSON(`${DATA}/trades?${q}`, signal));
+    return rows.map(window.DetectorData.trade);
   }
 
   function parseOutcomeSide(outcome) {

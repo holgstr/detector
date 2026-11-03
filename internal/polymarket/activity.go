@@ -11,7 +11,6 @@ import (
 
 const (
 	defaultActivityLimit = 100
-	maxActivityOffset    = 10000
 	maxActivityPages     = 20
 )
 
@@ -40,10 +39,12 @@ type Activity struct {
 // FetchActivityOptions pages a wallet's activity feed.
 type FetchActivityOptions struct {
 	User   string
-	Limit  int // default 100, max 500
-	Offset int
+	Limit  int    // default 100, max 1000
+	Cursor string // pagination.next_cursor from the previous page
 	Type   string // e.g. "TRADE"; empty = all types
 	Start  int64  // epoch seconds, inclusive lower bound (0 = API default window)
+	// NextCursor, when non-nil, receives the following page token (empty on the last page).
+	NextCursor *string
 }
 
 // ActivityKey uniquely identifies a fill so we can skip repeats.
@@ -62,14 +63,16 @@ func (c *Client) FetchActivity(ctx context.Context, opt FetchActivityOptions) ([
 	if limit <= 0 {
 		limit = defaultActivityLimit
 	}
-	if limit > 500 {
-		limit = 500
+	if limit > 1000 {
+		limit = 1000
 	}
 
 	q := url.Values{}
 	q.Set("user", user)
 	q.Set("limit", strconv.Itoa(limit))
-	q.Set("offset", strconv.Itoa(opt.Offset))
+	if cursor := strings.TrimSpace(opt.Cursor); cursor != "" {
+		q.Set("cursor", cursor)
+	}
 	if t := strings.TrimSpace(opt.Type); t != "" {
 		q.Set("type", t)
 	}
@@ -77,9 +80,19 @@ func (c *Client) FetchActivity(ctx context.Context, opt FetchActivityOptions) ([
 		q.Set("start", strconv.FormatInt(opt.Start, 10))
 	}
 
-	var out []Activity
-	if err := c.getJSON(ctx, dataBase+"/activity?"+q.Encode(), &out); err != nil {
+	var page struct {
+		Data       []activityWire `json:"data"`
+		Pagination pagination     `json:"pagination"`
+	}
+	if err := c.getJSON(ctx, c.dataAPI()+"/v2/activity?"+q.Encode(), &page); err != nil {
 		return nil, err
+	}
+	if opt.NextCursor != nil {
+		*opt.NextCursor = page.Pagination.next()
+	}
+	out := make([]Activity, 0, len(page.Data))
+	for _, row := range page.Data {
+		out = append(out, row.activity())
 	}
 	return out, nil
 }
@@ -161,14 +174,16 @@ func (c *Client) FetchActivitySince(ctx context.Context, user string, since int6
 	}
 
 	out := make([]Activity, 0, defaultActivityLimit)
-	offset := 0
+	cursor := ""
 	for page := 0; page < maxActivityPages; page++ {
+		var next string
 		acts, err := c.FetchActivity(ctx, FetchActivityOptions{
-			User:   user,
-			Limit:  500,
-			Offset: offset,
-			Type:   typ,
-			Start:  since,
+			User:       user,
+			Limit:      500,
+			Cursor:     cursor,
+			Type:       typ,
+			Start:      since,
+			NextCursor: &next,
 		})
 		if err != nil {
 			return out, false, err
@@ -183,13 +198,11 @@ func (c *Client) FetchActivitySince(ctx context.Context, user string, since int6
 			out = append(out, a)
 		}
 		last := acts[len(acts)-1].Timestamp
-		if len(acts) < 500 || (since > 0 && last < since) {
+		// Activity is newest-first. A row older than the window means the walk is done.
+		if next == "" || (since > 0 && last < since) {
 			return out, false, nil
 		}
-		offset += 500
-		if offset >= maxActivityOffset {
-			return out, true, nil
-		}
+		cursor = next
 	}
 	return out, true, nil
 }

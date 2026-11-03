@@ -29,13 +29,15 @@ type Position struct {
 type FetchPositionsOptions struct {
 	User          string
 	Market        string // condition ID; empty = all markets
-	Limit         int    // default 50, max 500
-	Offset        int    // skip this many rows (page through a full book)
-	SortBy        string // e.g. CURRENT; empty = API default
+	Limit         int    // default 50, max 1000
+	Cursor        string // pagination.next_cursor from the previous page
+	SortBy        string // CURRENT (mapped to CURRENT_VALUE) or a v2 sort; empty = API default
 	SortDirection string // ASC or DESC
+	// NextCursor, when non-nil, receives the following page token (empty on the last page).
+	NextCursor *string
 }
 
-// FetchPositions returns open positions for a wallet from /positions.
+// FetchPositions returns one page of open positions for a wallet from /v2/positions.
 func (c *Client) FetchPositions(ctx context.Context, opt FetchPositionsOptions) ([]Position, error) {
 	user := strings.TrimSpace(opt.User)
 	if user == "" {
@@ -45,30 +47,42 @@ func (c *Client) FetchPositions(ctx context.Context, opt FetchPositionsOptions) 
 	if limit <= 0 {
 		limit = defaultPositionLimit
 	}
-	if limit > 500 {
-		limit = 500
+	if limit > 1000 {
+		limit = 1000
 	}
 
 	q := url.Values{}
 	q.Set("user", user)
 	q.Set("limit", strconv.Itoa(limit))
-	q.Set("sizeThreshold", "0")
-	if opt.Offset > 0 {
-		q.Set("offset", strconv.Itoa(opt.Offset))
+	// v1 sizeThreshold=0. v2's default floor is 0.1 shares; 0 keeps dust rows.
+	q.Set("filter_type", "TOKENS")
+	q.Set("filter_amount", "0")
+	if cursor := strings.TrimSpace(opt.Cursor); cursor != "" {
+		q.Set("cursor", cursor)
 	}
 	if m := strings.TrimSpace(opt.Market); m != "" {
-		q.Set("market", m)
+		q.Set("condition", m)
 	}
-	if s := strings.TrimSpace(opt.SortBy); s != "" {
-		q.Set("sortBy", s)
+	if s := v2PositionSort(opt.SortBy); s != "" {
+		q.Set("sort_by", s)
 	}
 	if s := strings.TrimSpace(opt.SortDirection); s != "" {
-		q.Set("sortDirection", s)
+		q.Set("sort_direction", s)
 	}
 
-	var out []Position
-	if err := c.getJSON(ctx, dataBase+"/positions?"+q.Encode(), &out); err != nil {
+	var page struct {
+		Data       []positionWire `json:"data"`
+		Pagination pagination     `json:"pagination"`
+	}
+	if err := c.getJSON(ctx, c.dataAPI()+"/v2/positions?"+q.Encode(), &page); err != nil {
 		return nil, err
+	}
+	if opt.NextCursor != nil {
+		*opt.NextCursor = page.Pagination.next()
+	}
+	out := make([]Position, 0, len(page.Data))
+	for _, row := range page.Data {
+		out = append(out, row.position())
 	}
 	return out, nil
 }

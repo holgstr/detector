@@ -7,12 +7,12 @@ import (
 
 func TestFlattenHoldersLabelsSides(t *testing.T) {
 	raw := []byte(`[
-		{"token":"yes","holders":[
-			{"proxyWallet":"0xAAA","name":"holder4","amount":10,"outcomeIndex":0},
-			{"proxyWallet":"0xCCC","amount":0,"outcomeIndex":0}
+		{"token_id":"yes","holders":[
+			{"proxy_wallet":"0xAAA","name":"holder4","amount":10,"outcome_index":0},
+			{"proxy_wallet":"0xCCC","amount":0,"outcome_index":0}
 		]},
-		{"token":"no","holders":[
-			{"proxyWallet":"0xBBB","pseudonym":"quiet","amount":4,"outcomeIndex":1}
+		{"token_id":"no","holders":[
+			{"proxy_wallet":"0xBBB","pseudonym":"quiet","amount":4,"outcome_index":1}
 		]}
 	]`)
 	var groups []holdersResponse
