@@ -22,11 +22,12 @@ const (
 
 // Client talks to Polymarket's public Gamma + Data APIs.
 type Client struct {
-	HTTP      *http.Client
-	Workers   int
-	DataBase  string // override data-api.polymarket.com (tests)
-	GammaBase string // override gamma-api.polymarket.com (tests)
-	ClobBase  string // override clob.polymarket.com (tests)
+	HTTP        *http.Client
+	Workers     int
+	DataBase    string   // override data-api.polymarket.com (tests)
+	GammaBase   string   // override gamma-api.polymarket.com (tests)
+	ClobBase    string   // override clob.polymarket.com (tests)
+	PolygonRPCs []string // override public Polygon JSON-RPC endpoints (tests)
 
 	eventMu    sync.Mutex
 	eventCache map[string]EventMeta
