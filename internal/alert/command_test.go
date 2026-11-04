@@ -109,6 +109,19 @@ func TestParseCommand(t *testing.T) {
 		t.Fatalf("port n only %+v", got)
 	}
 
+	got = ParseCommand("/cash Flip")
+	if got.Cmd != CmdCash || got.Trader != "Flip" {
+		t.Fatalf("cash %+v", got)
+	}
+	got = ParseCommand("/cash@detectx_bot Flipadelphia extra")
+	if got.Cmd != CmdCash || got.Trader != "Flipadelphia extra" {
+		t.Fatalf("cash mention %+v", got)
+	}
+	got = ParseCommand("/cash")
+	if got.Cmd != CmdCash || got.Trader != "" {
+		t.Fatalf("cash empty %+v", got)
+	}
+
 	if ParseCommand("/update").Cmd != CmdUpdate {
 		t.Fatal("update")
 	}

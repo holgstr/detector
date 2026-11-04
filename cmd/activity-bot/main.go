@@ -19,6 +19,7 @@
 // (highest Yes price among the rest of the event). Reply to that message, or send /other next.
 // /alert <price> <size> and /pricewatch <YES|NO> <cents> do the same when the market is left off.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
+// /cash <trader> shows the pUSD sitting on that Polymarket profile (any name or wallet).
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
 // /ob <market> prints the 4 closest Yes CLOB ticks on each side with size
@@ -401,6 +402,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdPort {
 		replyPort(ctx, tg, api, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdCash {
+		replyCash(ctx, tg, api, chatID, cmd)
 	}
 	if cmd.Cmd == alert.CmdLastTrades {
 		replyLastTrades(ctx, tg, api, chatID, cmd)
@@ -824,6 +828,27 @@ func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client,
 		shown = cmd.Limit
 	}
 	log.Printf("port trader=%s markets=%d shown=%d", w.Name, len(rep.Holdings), shown)
+}
+
+func replyCash(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
+	w, errMsg := alert.ResolveCashWallet(ctx, api, cmd.Trader)
+	if errMsg != "" {
+		if err := tg.SendMessage(ctx, chatID, errMsg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	usd, err := api.FetchCash(ctx, w.Address)
+	if err != nil {
+		if sendErr := tg.SendMessage(ctx, chatID, fmt.Sprintf("Couldn't load cash: %v", err)); sendErr != nil {
+			log.Printf("reply: %v", sendErr)
+		}
+		return
+	}
+	if err := tg.SendMessage(ctx, chatID, alert.FormatCash(w.Name, usd)); err != nil {
+		log.Printf("reply: %v", err)
+	}
+	log.Printf("cash trader=%s usd=%.2f", w.Name, usd)
 }
 
 func replyLastTrades(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
