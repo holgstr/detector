@@ -108,6 +108,14 @@ func TestParseCommand(t *testing.T) {
 	if got.Cmd != CmdPort || got.Trader != "" || got.Limit != 5 {
 		t.Fatalf("port n only %+v", got)
 	}
+	got = ParseCommand("/fullport")
+	if got.Cmd != CmdFullPort {
+		t.Fatalf("fullport %+v", got)
+	}
+	got = ParseCommand("/fullport@detectx_bot")
+	if got.Cmd != CmdFullPort {
+		t.Fatalf("fullport mention %+v", got)
+	}
 
 	got = ParseCommand("/cash Flip")
 	if got.Cmd != CmdCash || got.Trader != "Flip" {

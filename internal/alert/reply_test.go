@@ -11,7 +11,7 @@ import (
 func TestMarketFromReplyFill(t *testing.T) {
 	text := Format(Alert{
 		Name: "SnowLover7", Side: "BUY", Outcome: "No", Size: 32000, Price: 0.32,
-		Title: "Fed decision in September?",
+		Title:       "Fed decision in September?",
 		HasPosition: true, PositionSize: 27500, PositionOutcome: "YES",
 	})
 	got, n := MarketFromReply(text)
@@ -147,6 +147,27 @@ func TestMarketFromReplyPort(t *testing.T) {
 		Holdings: []PortHolding{
 			{Title: "Market A", Size: 8600, Outcome: "YES", CurPrice: 0.64, AvgPrice: 0.61, HasCur: true, HasAvg: true},
 			{Title: "Market B", Size: 3400, Outcome: "NO", CurPrice: 0.20, AvgPrice: 0.21, HasCur: true, HasAvg: true},
+		},
+	})
+	if _, n = MarketFromReply(many[0]); n < 2 {
+		t.Fatalf("many n=%d\n%s", n, many[0])
+	}
+}
+
+func TestMarketFromReplyFullPort(t *testing.T) {
+	one := FormatFullPortReport(FullPortReport{
+		Holdings: []PortHolding{
+			{Title: "Market A (2026)", Size: 8600, Outcome: "YES", CurPrice: 0.64, AvgPrice: 0.61, HasCur: true, HasAvg: true, Wallets: 3},
+		},
+	})
+	got, n := MarketFromReply(one[0])
+	if n != 1 || got != "Market A (2026)" {
+		t.Fatalf("n=%d %q\n%s", n, got, one[0])
+	}
+	many := FormatFullPortReport(FullPortReport{
+		Holdings: []PortHolding{
+			{Title: "Market A", Size: 8600, Outcome: "YES", CurPrice: 0.64, AvgPrice: 0.61, HasCur: true, HasAvg: true, Wallets: 3},
+			{Title: "Market B", Size: 3400, Outcome: "NO", CurPrice: 0.20, AvgPrice: 0.21, HasCur: true, HasAvg: true, Wallets: 2},
 		},
 	})
 	if _, n = MarketFromReply(many[0]); n < 2 {

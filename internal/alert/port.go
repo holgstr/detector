@@ -30,6 +30,8 @@ type PortHolding struct {
 	HasCur      bool
 	HasAvg      bool
 	MarketValue float64
+	// Wallets is how many tracked wallets are net this side. /port leaves it 0.
+	Wallets int
 }
 
 // PortReport is /port output: one trader's open non-sports nets.
