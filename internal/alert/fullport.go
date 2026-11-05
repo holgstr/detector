@@ -12,19 +12,33 @@ import (
 	"github.com/holgstr/detector/internal/sharps"
 )
 
+const (
+	// FullPortDefaultLimit is how many lines /fullport shows when no count is given.
+	FullPortDefaultLimit = 20
+	// Slack past the rows still needed, so a few sports lines in the window
+	// don't force another sports-lookup round.
+	fullPortSportsSlack = 16
+	fullPortSportsBatch = 48
+)
+
 // FullPortReport is /fullport: every tracked wallet's open book netted together.
 type FullPortReport struct {
 	Holdings  []PortHolding
 	Truncated bool
 	Failed    int
+	// Limit is the requested top-N. Zero means the whole book.
+	Limit int
+	// More means at least one qualifying line was left off because of Limit.
+	More bool
 }
 
 // BuildFullPortReport nets every wallet into one book, then drops sports and
-// sub-$100 lines the same way /port does. Wallets on a line is how many of
-// those wallets are themselves net that side (the other side is in the share
-// count, and is not named).
-func BuildFullPortReport(ctx context.Context, api sportsLookup, byWallet map[string][]polymarket.Position, truncated bool, failed int) FullPortReport {
-	holdings := dropSmallHoldings(dropSportsHoldings(ctx, api, aggregateFullPort(byWallet)))
+// sub-$100 lines the same way /port does. limit keeps the top lines by market
+// value; zero keeps them all. Sports lookups run only for lines that can still
+// make that list. Wallets on a line is how many of those wallets are themselves
+// net that side (the other side is in the share count, and is not named).
+func BuildFullPortReport(ctx context.Context, api sportsLookup, byWallet map[string][]polymarket.Position, truncated bool, failed, limit int) FullPortReport {
+	holdings := aggregateFullPort(byWallet)
 	sort.SliceStable(holdings, func(i, j int) bool {
 		if holdings[i].MarketValue != holdings[j].MarketValue {
 			return holdings[i].MarketValue > holdings[j].MarketValue
@@ -34,7 +48,45 @@ func BuildFullPortReport(ctx context.Context, api sportsLookup, byWallet map[str
 		}
 		return holdings[i].Title < holdings[j].Title
 	})
-	return FullPortReport{Holdings: holdings, Truncated: truncated, Failed: failed}
+	kept, more := limitFullPort(ctx, api, dropSmallHoldings(holdings), limit)
+	return FullPortReport{Holdings: kept, Truncated: truncated, Failed: failed, Limit: limit, More: more}
+}
+
+// limitFullPort drops sports, then keeps the first limit lines. Sub-$100 rows
+// are already gone, so a short top-N never asks Gamma about the rest of the book.
+func limitFullPort(ctx context.Context, api sportsLookup, holdings []PortHolding, limit int) ([]PortHolding, bool) {
+	if limit <= 0 {
+		return dropSportsHoldings(ctx, api, holdings), false
+	}
+	var kept []PortHolding
+	i := 0
+	for len(kept) < limit && i < len(holdings) {
+		need := limit - len(kept)
+		batch := need + fullPortSportsSlack
+		if batch > fullPortSportsBatch {
+			batch = fullPortSportsBatch
+		}
+		end := i + batch
+		if end > len(holdings) {
+			end = len(holdings)
+		}
+		filtered := dropSportsHoldings(ctx, api, holdings[i:end])
+		if len(filtered) > need {
+			return append(kept, filtered[:need]...), true
+		}
+		kept = append(kept, filtered...)
+		i = end
+	}
+	if len(kept) < limit {
+		return kept, false
+	}
+	for _, h := range holdings[i:] {
+		slug := strings.TrimSpace(h.EventSlug)
+		if slug == "" || !polymarket.LooksLikeSportsSlug(h.EventSlug, h.Slug) {
+			return kept, true
+		}
+	}
+	return kept, false
 }
 
 type fullLeg struct {
@@ -290,12 +342,12 @@ func aggregateFullPort(byWallet map[string][]polymarket.Position) []PortHolding 
 func FetchFullPortReport(ctx context.Context, api interface {
 	positionLookup
 	sportsLookup
-}, wallets []sharps.Wallet) (FullPortReport, error) {
+}, wallets []sharps.Wallet, limit int) (FullPortReport, error) {
 	byWallet, failed, truncated, err := fetchFullPortBooks(ctx, api, wallets)
 	if err != nil && len(byWallet) == 0 {
-		return FullPortReport{Failed: failed}, err
+		return FullPortReport{Failed: failed, Limit: limit}, err
 	}
-	rep := BuildFullPortReport(ctx, api, byWallet, truncated, failed)
+	rep := BuildFullPortReport(ctx, api, byWallet, truncated, failed, limit)
 	return rep, err
 }
 
@@ -381,6 +433,9 @@ func FormatFullPortReport(r FullPortReport) []string {
 	head := "All tracked"
 	if r.Truncated {
 		head += "\n(Position book truncated — some small holdings may be missing.)"
+	}
+	if r.More && r.Limit > 0 {
+		head += fmt.Sprintf("\n(top %d by market value)", r.Limit)
 	}
 	if len(r.Holdings) == 0 {
 		body := head + "\nNo open non-sports holdings of $100+."
