@@ -109,12 +109,26 @@ func TestParseCommand(t *testing.T) {
 		t.Fatalf("port n only %+v", got)
 	}
 	got = ParseCommand("/fullport")
-	if got.Cmd != CmdFullPort {
+	if got.Cmd != CmdFullPort || got.Limit != FullPortDefaultLimit {
 		t.Fatalf("fullport %+v", got)
 	}
 	got = ParseCommand("/fullport@detectx_bot")
-	if got.Cmd != CmdFullPort {
+	if got.Cmd != CmdFullPort || got.Limit != FullPortDefaultLimit {
 		t.Fatalf("fullport mention %+v", got)
+	}
+	got = ParseCommand("/fullport 5")
+	if got.Cmd != CmdFullPort || got.Limit != 5 {
+		t.Fatalf("fullport n %+v", got)
+	}
+	got = ParseCommand("/full-port 40")
+	if got.Cmd != CmdFullPort || got.Limit != 40 {
+		t.Fatalf("fullport alias %+v", got)
+	}
+	if ParseCommand("/fullport 5 extra").Cmd != CmdHelp || ParseCommand("/fullport 0").Cmd != CmdHelp {
+		t.Fatal("fullport junk")
+	}
+	if !strings.Contains(HelpText(100), "/fullport 5") {
+		t.Fatal(HelpText(100))
 	}
 
 	got = ParseCommand("/cash Flip")

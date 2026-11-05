@@ -3,6 +3,7 @@ package alert
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestBuildFullPortReportNetsAndCountsSide(t *testing.T) {
 		"0xf": {{ConditionID: "f", Title: "Market F", Outcome: "No", Size: 1000, AvgPrice: 0.20, CurPrice: 0.20}},
 		"0xg": {{ConditionID: "f", Title: "Market F", Outcome: "No", Size: 1000, AvgPrice: 0.20, CurPrice: 0.20}},
 	}
-	r := BuildFullPortReport(context.Background(), fakeSports{}, by, false, 1)
+	r := BuildFullPortReport(context.Background(), fakeSports{}, by, false, 1, 0)
 	if r.Failed != 1 || len(r.Holdings) != 2 {
 		t.Fatalf("%+v", r)
 	}
@@ -89,7 +90,7 @@ func TestFetchFullPortReport(t *testing.T) {
 		{Address: "0xAAA", Name: "Alice"},
 		{Address: "0xBBB", Name: "Bob"},
 	}
-	r, err := FetchFullPortReport(context.Background(), api, wallets)
+	r, err := FetchFullPortReport(context.Background(), api, wallets, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,11 +124,68 @@ func TestFetchFullPortReportSkipsFailedWallet(t *testing.T) {
 	r, err := FetchFullPortReport(context.Background(), api, []sharps.Wallet{
 		{Address: "0xaaa", Name: "Alice"},
 		{Address: "0xbbb", Name: "Bob"},
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Failed != 1 || len(r.Holdings) != 1 || r.Holdings[0].Wallets != 1 || r.Holdings[0].Size != 400 {
 		t.Fatalf("%+v", r)
+	}
+}
+
+type countingSports struct {
+	fakeSports
+	calls int
+}
+
+func (c *countingSports) EventIsSports(ctx context.Context, slug string) (bool, error) {
+	c.calls++
+	return c.fakeSports.EventIsSports(ctx, slug)
+}
+
+func TestFullPortLimitSkipsTailLookups(t *testing.T) {
+	by := make(map[string][]polymarket.Position)
+	var rows []polymarket.Position
+	for i := 0; i < 40; i++ {
+		rows = append(rows, polymarket.Position{
+			ConditionID: fmt.Sprintf("m%d", i),
+			Title:       fmt.Sprintf("Market %02d", i),
+			EventSlug:   fmt.Sprintf("election-%02d", i),
+			Outcome:     "Yes",
+			Size:        float64(1000 - i*10),
+			CurPrice:    0.50,
+		})
+	}
+	// Obvious sports sit at the top and must not burn a lookup or take a slot.
+	rows = append(rows, polymarket.Position{
+		ConditionID: "nfl",
+		Title:       "Game",
+		EventSlug:   "nfl-atl-pit-2026-09-13",
+		Outcome:     "Yes",
+		Size:        50000,
+		CurPrice:    0.50,
+	})
+	by["0xaaa"] = rows
+	api := &countingSports{}
+	r := BuildFullPortReport(context.Background(), api, by, false, 0, 5)
+	if len(r.Holdings) != 5 || !r.More || r.Holdings[0].Title != "Market 00" {
+		t.Fatalf("%+v calls=%d", r, api.calls)
+	}
+	if api.calls > 5+fullPortSportsSlack || api.calls >= 40 {
+		t.Fatalf("calls=%d", api.calls)
+	}
+	got := FormatFullPortReport(r)
+	if len(got) != 1 || !strings.Contains(got[0], "(top 5 by market value)") || strings.Contains(got[0], "Game") || strings.Contains(got[0], "Market 10") {
+		t.Fatalf("calls=%d\n%s", api.calls, got)
+	}
+
+	short := BuildFullPortReport(context.Background(), fakeSports{}, map[string][]polymarket.Position{
+		"0xaaa": {{ConditionID: "a", Title: "Only", EventSlug: "election-a", Outcome: "Yes", Size: 400, CurPrice: 0.5}},
+	}, false, 0, FullPortDefaultLimit)
+	if short.More || len(short.Holdings) != 1 {
+		t.Fatalf("%+v", short)
+	}
+	if strings.Contains(FormatFullPortReport(short)[0], "top ") {
+		t.Fatalf("%s", FormatFullPortReport(short)[0])
 	}
 }
