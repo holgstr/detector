@@ -303,10 +303,31 @@ func netOrPortTitle(line string) (string, bool) {
 	if cut := strings.Index(right, " | "); cut >= 0 {
 		right = strings.TrimSpace(right[:cut])
 	}
+	right = stripTrailingWalletCount(right)
 	if right == "" || strings.Contains(right, "  ") {
 		return "", false
 	}
 	return right, true
+}
+
+// stripTrailingWalletCount drops a /fullport "(3)" suffix. Years and other
+// parentheticals (4+ characters, or not all digits) stay on the title.
+func stripTrailingWalletCount(s string) string {
+	s = strings.TrimSpace(s)
+	i := strings.LastIndex(s, " (")
+	if i < 0 || !strings.HasSuffix(s, ")") {
+		return s
+	}
+	num := s[i+2 : len(s)-1]
+	if len(num) < 1 || len(num) > 3 {
+		return s
+	}
+	for _, r := range num {
+		if r < '0' || r > '9' {
+			return s
+		}
+	}
+	return strings.TrimSpace(s[:i])
 }
 
 func listMarket(line string) (string, bool) {

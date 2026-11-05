@@ -19,6 +19,7 @@
 // (highest Yes price among the rest of the event). Reply to that message, or send /other next.
 // /alert <price> <size> and /pricewatch <YES|NO> <cents> do the same when the market is left off.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
+// /fullport nets every tracked wallet into that same book. (n) after the market name is how many wallets are net that side.
 // /cash <trader> shows the pUSD sitting on that Polymarket profile (any name or wallet).
 // /lasttrades [trader] [market] [Nh] lists recent fills (default 24h; names need not be tracked; omit trader = all tracked).
 // /kelly <price> <fv> prints full, half, 1/3, and 1/4 Kelly % of bankroll.
@@ -402,6 +403,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	}
 	if cmd.Cmd == alert.CmdPort {
 		replyPort(ctx, tg, api, chatID, cmd)
+	}
+	if cmd.Cmd == alert.CmdFullPort {
+		replyFullPort(ctx, tg, api, chatID)
 	}
 	if cmd.Cmd == alert.CmdCash {
 		replyCash(ctx, tg, api, chatID, cmd)
@@ -828,6 +832,33 @@ func replyPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client,
 		shown = cmd.Limit
 	}
 	log.Printf("port trader=%s markets=%d shown=%d", w.Name, len(rep.Holdings), shown)
+}
+
+func replyFullPort(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64) {
+	wallets := sharps.List()
+	if len(wallets) == 0 {
+		if err := tg.SendMessage(ctx, chatID, "No tracked wallets."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchFullPortReport(ctx, api, wallets)
+	if err != nil && len(rep.Holdings) == 0 {
+		if sendErr := tg.SendMessage(ctx, chatID, fmt.Sprintf("Couldn't load positions: %v", err)); sendErr != nil {
+			log.Printf("reply: %v", sendErr)
+		}
+		return
+	}
+	chunks := alert.FormatFullPortReport(rep)
+	if err != nil {
+		chunks = append(chunks, fmt.Sprintf("(partial fetch: %v)", err))
+	}
+	for _, text := range chunks {
+		if err := tg.SendMessage(ctx, chatID, text); err != nil {
+			log.Printf("reply: %v", err)
+		}
+	}
+	log.Printf("fullport markets=%d failed=%d", len(rep.Holdings), rep.Failed)
 }
 
 func replyCash(ctx context.Context, tg *telegram.Client, api *polymarket.Client, chatID int64, cmd alert.ParsedCommand) {
