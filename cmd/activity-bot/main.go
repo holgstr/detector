@@ -13,9 +13,9 @@
 // An exact Polymarket name or wallet works even when that trader is not tracked.
 // /pos <market> lists tracked holdings; words, slugs, and URLs all resolve.
 // /holders <market> lists the top 10 holders on each side (net if a wallet holds both), with acquisition price.
-// /pos, /holders, /ob, /obp, and /obk with no market reuse the market the previous command named.
-// Replying to a message that names one market (a fill, /pos, /ob, and the rest) does the same.
-// /other repeats /pos, /holders, /ob, /obp, or /obk for the other main outcome
+// /pos, /holders, /ob, /obp, /obk, and /chart with no market reuse the market the previous command named.
+// Replying to a message that names one market (a fill, /pos, /ob, /chart, and the rest) does the same.
+// /other repeats /pos, /holders, /ob, /obp, /obk, or /chart for the other main outcome
 // (highest Yes price among the rest of the event). Reply to that message, or send /other next.
 // /alert <price> <size> and /pricewatch <YES|NO> <cents> do the same when the market is left off.
 // /port [N] <trader> lists that wallet's open non-sports nets of $100+ (shares, acquisition and current price; any Polymarket name). N keeps the top N by market value.
@@ -27,7 +27,8 @@
 // (keyword queries pick large tracked exposure, else the most traded live market).
 // /obp <market> prints the same ladder from Pascal (an event name shows every outcome).
 // /obk <market> prints that ladder from Kalshi (an event name shows every outcome).
-// With no market, /ob, /obp, and /obk reuse the market the previous command named, including a repeat of the same command.
+// /chart <market> [24h] sends a Yes candle chart (15m–90d; default 24h). Words, slugs, and URLs resolve like /ob.
+// With no market, /ob, /obp, /obk, and /chart reuse the market the previous command named, including a repeat of the same command.
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.
 // Each ping shows the market name and the same inside ladder as /ob.
@@ -42,6 +43,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -422,6 +424,9 @@ func handleUpdate(ctx context.Context, tg *telegram.Client, api *polymarket.Clie
 	if cmd.Cmd == alert.CmdOBK {
 		replyOBK(ctx, tg, kbooks, b, chatID, cmd)
 	}
+	if cmd.Cmd == alert.CmdChart {
+		replyChart(ctx, tg, api, b, chatID, cmd)
+	}
 	if cmd.Cmd == alert.CmdOther {
 		replyOther(ctx, tg, api, books, kbooks, b, chatID, u.Message.ReplyTo)
 	}
@@ -548,7 +553,7 @@ func sameVenue(cmd alert.Command, lastCmd string) bool {
 
 func commandVenue(c alert.Command) string {
 	switch c {
-	case alert.CmdPos, alert.CmdHolders, alert.CmdOB, alert.CmdAlert, alert.CmdUnalert, alert.CmdPriceWatch, alert.CmdUnpriceWatch:
+	case alert.CmdPos, alert.CmdHolders, alert.CmdOB, alert.CmdChart, alert.CmdAlert, alert.CmdUnalert, alert.CmdPriceWatch, alert.CmdUnpriceWatch:
 		return "poly"
 	case alert.CmdOBP:
 		return "pascal"
@@ -561,7 +566,7 @@ func commandVenue(c alert.Command) string {
 
 func commandNamesMarket(c alert.Command) bool {
 	switch c {
-	case alert.CmdPos, alert.CmdHolders, alert.CmdLastTrades, alert.CmdOB, alert.CmdOBP, alert.CmdOBK,
+	case alert.CmdPos, alert.CmdHolders, alert.CmdLastTrades, alert.CmdOB, alert.CmdOBP, alert.CmdOBK, alert.CmdChart,
 		alert.CmdAlert, alert.CmdUnalert, alert.CmdPriceWatch, alert.CmdUnpriceWatch:
 		return true
 	default:
@@ -574,7 +579,7 @@ func commandNamesMarket(c alert.Command) bool {
 // are excluded.
 func commandDefaultsMarket(cmd alert.ParsedCommand) bool {
 	switch cmd.Cmd {
-	case alert.CmdPos, alert.CmdHolders, alert.CmdOB, alert.CmdOBP, alert.CmdOBK:
+	case alert.CmdPos, alert.CmdHolders, alert.CmdOB, alert.CmdOBP, alert.CmdOBK, alert.CmdChart:
 		return true
 	case alert.CmdAlert:
 		return cmd.Price > 0 && cmd.MinSize > 0
@@ -978,9 +983,45 @@ func replyOther(ctx context.Context, tg *telegram.Client, api *polymarket.Client
 		replyOBP(ctx, tg, books, b, chatID, next)
 	case alert.CmdOBK:
 		replyOBK(ctx, tg, kbooks, b, chatID, next)
+	case alert.CmdChart:
+		replyChart(ctx, tg, api, b, chatID, next)
 	default:
 		replyPos(ctx, tg, api, b, chatID, next)
 	}
+}
+
+func replyChart(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
+	query := strings.TrimSpace(cmd.Market)
+	window := cmd.Window
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	if query == "" {
+		if err := tg.SendMessage(ctx, chatID, "Usage: /chart <market> [24h] — words, slug, or URL. Window is 15m–90d (6h, 7d, 1w); default 24h."); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	rep, err := alert.FetchChart(ctx, api, query, window, sharps.List())
+	if err != nil {
+		msg := fmt.Sprintf("No active market matching %q.", query)
+		low := strings.ToLower(err.Error())
+		switch {
+		case errors.Is(err, alert.ErrNoPriceHistory):
+			msg = fmt.Sprintf("No price history in the last %s.", alert.FormatChartWindow(alert.ClampChartWindow(window)))
+		case strings.Contains(low, "resolved"):
+			msg = fmt.Sprintf("%q is resolved, not an active market.", query)
+		case !strings.Contains(low, "active market") && !strings.Contains(low, "no active"):
+			msg = fmt.Sprintf("Couldn't load chart: %v", err)
+		}
+		if err := tg.SendMessage(ctx, chatID, msg); err != nil {
+			log.Printf("reply: %v", err)
+		}
+		return
+	}
+	caption := alert.FormatChartCaption(rep)
+	b.sendTrackedPhoto(ctx, tg, chatID, alert.CmdChart, trackRef(cmd, rep.URL, rep.Slug, rep.Title, query), caption, rep.PNG)
+	log.Printf("chart query=%q market=%q window=%s candles=%d", query, rep.Title, alert.FormatChartWindow(rep.Window), len(rep.Candles))
 }
 
 func replyOB(ctx context.Context, tg *telegram.Client, api *polymarket.Client, b *bot, chatID int64, cmd alert.ParsedCommand) {
@@ -1484,12 +1525,25 @@ func trackRef(cmd alert.ParsedCommand, url, slug, title, query string) string {
 	return ""
 }
 
+func (b *bot) sendTrackedPhoto(ctx context.Context, tg *telegram.Client, chatID int64, kind alert.Command, ref, caption string, png []byte) {
+	id, err := tg.SendPhoto(ctx, chatID, png, caption)
+	if err != nil {
+		log.Printf("reply: %v", err)
+		return
+	}
+	b.rememberSent(kind, ref, id)
+}
+
 func (b *bot) sendTracked(ctx context.Context, tg *telegram.Client, chatID int64, kind alert.Command, ref, text string) {
 	id, err := tg.SendMessageID(ctx, chatID, text)
 	if err != nil {
 		log.Printf("reply: %v", err)
 		return
 	}
+	b.rememberSent(kind, ref, id)
+}
+
+func (b *bot) rememberSent(kind alert.Command, ref string, id int64) {
 	name, ok := alert.MarketCommandName(kind)
 	ref = strings.TrimSpace(ref)
 	if !ok || ref == "" {

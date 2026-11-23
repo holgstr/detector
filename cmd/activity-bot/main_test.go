@@ -23,7 +23,7 @@ func TestCommandRepliesFirstMessageIsWelcome(t *testing.T) {
 
 func TestCommandRepliesHelp(t *testing.T) {
 	got := commandReplies(false, alert.ParsedCommand{Cmd: alert.CmdHelp}, 50)
-	if len(got) != 1 || !strings.Contains(got[0], "/net") || !strings.Contains(got[0], "/pos") || !strings.Contains(got[0], "/holders") || !strings.Contains(got[0], "/port") || !strings.Contains(got[0], "/fullport") || !strings.Contains(got[0], "/cash") || !strings.Contains(got[0], "/lasttrades") || !strings.Contains(got[0], "/kelly") || !strings.Contains(got[0], "/ob") || !strings.Contains(got[0], "/obp") || !strings.Contains(got[0], "/obk") || !strings.Contains(got[0], "/other") || !strings.Contains(got[0], "/alert") || !strings.Contains(got[0], "/pricewatch") || !strings.Contains(got[0], "/tracked") || !strings.Contains(got[0], "/add") || !strings.Contains(got[0], "/unadd") || !strings.Contains(got[0], "/update") {
+	if len(got) != 1 || !strings.Contains(got[0], "/net") || !strings.Contains(got[0], "/pos") || !strings.Contains(got[0], "/holders") || !strings.Contains(got[0], "/port") || !strings.Contains(got[0], "/fullport") || !strings.Contains(got[0], "/cash") || !strings.Contains(got[0], "/lasttrades") || !strings.Contains(got[0], "/kelly") || !strings.Contains(got[0], "/ob") || !strings.Contains(got[0], "/obp") || !strings.Contains(got[0], "/obk") || !strings.Contains(got[0], "/chart") || !strings.Contains(got[0], "/other") || !strings.Contains(got[0], "/alert") || !strings.Contains(got[0], "/pricewatch") || !strings.Contains(got[0], "/tracked") || !strings.Contains(got[0], "/add") || !strings.Contains(got[0], "/unadd") || !strings.Contains(got[0], "/update") {
 		t.Fatalf("%q", got)
 	}
 }
@@ -35,7 +35,7 @@ func TestStickMarketReusesLastNamed(t *testing.T) {
 	if cmd.Market != "Aliens" || mem.Precise != "Aliens" || mem.Search != "Aliens" {
 		t.Fatalf("named /ob: cmd=%q mem=%+v", cmd.Market, mem)
 	}
-	for _, c := range []alert.Command{alert.CmdOBK, alert.CmdOBP, alert.CmdOB, alert.CmdPos, alert.CmdHolders} {
+	for _, c := range []alert.Command{alert.CmdOBK, alert.CmdOBP, alert.CmdOB, alert.CmdPos, alert.CmdHolders, alert.CmdChart} {
 		cmd, mem = stickMarket(alert.ParsedCommand{Cmd: c}, mem)
 		if cmd.Market != "Aliens" || mem.Precise != "Aliens" || mem.Search != "Aliens" {
 			t.Fatalf("bare %d: cmd=%q mem=%+v", c, cmd.Market, mem)
@@ -95,6 +95,9 @@ func TestStickMarketCrossVenueUsesTypedWords(t *testing.T) {
 	url := "https://polymarket.com/event/south-carolina-senate-2026/will-the-democrats-win-the-south-carolina-senate-race-in-2026"
 	mem := marketMemory{Precise: url, Search: "South Carolina Senate", Cmd: "ob"}
 
+	if cmd, _ := stickMarket(alert.ParsedCommand{Cmd: alert.CmdChart}, mem); cmd.Market != url {
+		t.Fatalf("/chart after /ob should keep the polymarket url: %q", cmd.Market)
+	}
 	cmd, mem := stickMarket(alert.ParsedCommand{Cmd: alert.CmdOBP}, mem)
 	if cmd.Market != "South Carolina Senate" || mem.Precise != url || mem.Search != "South Carolina Senate" {
 		t.Fatalf("/obp after /ob: cmd=%q mem=%+v", cmd.Market, mem)
@@ -116,6 +119,10 @@ func TestStickMarketCrossVenueUsesTypedWords(t *testing.T) {
 	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdOBP}, mem)
 	if cmd.Market != "SC_SENATE_2026.DEM" {
 		t.Fatalf("same-venue /obp should keep the symbol: %q", cmd.Market)
+	}
+	cmd, _ = stickMarket(alert.ParsedCommand{Cmd: alert.CmdChart}, mem)
+	if cmd.Market != "South Carolina Senate" {
+		t.Fatalf("/chart after /obp should search the typed words: %q", cmd.Market)
 	}
 }
 

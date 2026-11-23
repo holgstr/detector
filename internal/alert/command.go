@@ -38,6 +38,7 @@ const (
 	CmdUnpriceWatch
 	CmdCancel
 	CmdOther
+	CmdChart
 )
 
 // ParsedCommand is a recognized chat line.
@@ -59,7 +60,7 @@ type ParsedCommand struct {
 	TrackMarket string
 }
 
-// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /holders [market], /port [N] [trader], /fullport [N], /cash [trader], /lasttrades [trader] [market] [Nh], /tracked, /add, /unadd, /kelly, /ob, /obp, /obk, /other, /alert, /unalert, /pricewatch, /unpricewatch, /cancel, and /update.
+// ParseCommand understands /start, /help, /minsize [amount], /net [Nh|trader], /pos [market], /holders [market], /port [N] [trader], /fullport [N], /cash [trader], /lasttrades [trader] [market] [Nh], /tracked, /add, /unadd, /kelly, /ob, /obp, /obk, /chart [market] [window], /other, /alert, /unalert, /pricewatch, /unpricewatch, /cancel, and /update.
 func ParseCommand(text string) ParsedCommand {
 	line := strings.TrimSpace(text)
 	if line == "" {
@@ -143,6 +144,12 @@ func ParseCommand(text string) ParsedCommand {
 		return ParsedCommand{Cmd: CmdOBP, Market: strings.TrimSpace(rest)}
 	case "obk":
 		return ParsedCommand{Cmd: CmdOBK, Market: strings.TrimSpace(rest)}
+	case "chart", "charts", "candle", "candles":
+		window, market, ok := parseChartArgs(rest)
+		if !ok {
+			return ParsedCommand{Cmd: CmdHelp}
+		}
+		return ParsedCommand{Cmd: CmdChart, Market: market, Window: window}
 	case "alert", "pricealert", "price-alert", "askalert", "ask-alert", "bidalert", "bid-alert":
 		return parseAlertCommand(rest)
 	case "unalert", "un-alert", "delalert", "stopalert":
@@ -158,6 +165,85 @@ func ParseCommand(text string) ParsedCommand {
 	default:
 		return ParsedCommand{}
 	}
+}
+
+// parseChartArgs reads an optional window (6h, 24h, 7d, 1w, 90m) and the
+// rest as the market. A bare number is hours only when it is the whole
+// argument (/chart 24), so a year inside a name stays part of the market.
+// Two windows are rejected. The default window is 24h.
+func parseChartArgs(rest string) (time.Duration, string, bool) {
+	fields := strings.Fields(rest)
+	if len(fields) == 1 {
+		if d, ok := parseWindowToken(fields[0]); ok && !chartWindowHasUnit(fields[0]) {
+			return ClampChartWindow(d), "", true
+		}
+	}
+	window := defaultChartWindow
+	saw := false
+	var parts []string
+	for _, tok := range fields {
+		d, ok := parseChartWindow(tok)
+		if !ok {
+			parts = append(parts, tok)
+			continue
+		}
+		if saw {
+			return 0, "", false
+		}
+		window = ClampChartWindow(d)
+		saw = true
+	}
+	return window, strings.Join(parts, " "), true
+}
+
+func parseChartWindow(tok string) (time.Duration, bool) {
+	if !chartWindowHasUnit(tok) {
+		return 0, false
+	}
+	if d, ok := parseWindowToken(tok); ok {
+		return d, true
+	}
+	return parseWeekToken(tok)
+}
+
+func chartWindowHasUnit(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "+")
+	for _, suf := range []string{
+		"hours", "hour", "hrs", "hr", "h",
+		"minutes", "minute", "mins", "min", "m",
+		"days", "day", "d",
+		"weeks", "week", "w",
+	} {
+		if strings.HasSuffix(s, suf) && strings.TrimSuffix(s, suf) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func parseWeekToken(s string) (time.Duration, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "+")
+	switch {
+	case strings.HasSuffix(s, "weeks"):
+		s = strings.TrimSuffix(s, "weeks")
+	case strings.HasSuffix(s, "week"):
+		s = strings.TrimSuffix(s, "week")
+	case strings.HasSuffix(s, "w"):
+		s = strings.TrimSuffix(s, "w")
+	default:
+		return 0, false
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return time.Duration(v * float64(7*24*time.Hour)), true
 }
 
 func parseAlertCommand(rest string) ParsedCommand {
@@ -451,7 +537,7 @@ func parseUSDAmount(s string) (float64, bool) {
 
 // HelpText lists chat commands.
 func HelpText(minUSD float64) string {
-	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match tracked wallets; an exact name or wallet works even if untracked)\n/pos <market> — tracked holdings (words, slug, or URL; ambiguous names prefer large tracked nets)\n/holders <market> — top 10 holders on each side, netted when a wallet holds both (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value (any Polymarket name)\n/port 5 <trader> — same list, only the top 5 by market value\n/fullport — top 20 of the net non-sports book across tracked wallets ($100+, by market value); (n) is how many wallets are net that side\n/fullport 5 — same list, only the top 5\n/cash <trader> — pUSD cash on that Polymarket profile (name or wallet)\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; names resolve even if untracked; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words pick tracked-heavy or high-volume markets)\n/obp <market> — Pascal book (4 closest ticks each side; an event name shows every outcome)\n/obk <market> — Kalshi book (4 closest Yes ticks each side; an event name shows every outcome)\n/pos, /holders, /ob, /obp, and /obk with no market reuse the last one (so /ob Aliens then /holders, /pos, or /ob again). Replying to a message that names one market does the same. /other repeats that command for the other main outcome (highest Yes price in the event); reply to the message or send /other next. /alert 32 1000 and /pricewatch NO 3 do the same\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000). /alert alone lists watches\n/unalert <market> — stop a price alert\n/pricewatch <market> <YES|NO> <cents> — ping when that side's midpoint moves by N cents, then re-anchor\n/unpricewatch <market> — stop a price watch\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
+	return fmt.Sprintf("Commands:\n/minsize — show min size (now %s)\n/minsize 100 — hide fills under $100 after aggregating same-market same-direction trades\n/net — net share changes in the last 24h with effective avg price (flat markets omitted)\n/net 6h Flip — same as /net Flip 6h (short names match tracked wallets; an exact name or wallet works even if untracked)\n/pos <market> — tracked holdings (words, slug, or URL; ambiguous names prefer large tracked nets)\n/holders <market> — top 10 holders on each side, netted when a wallet holds both (words, slug, or URL)\n/port <trader> — that trader's open non-sports nets of $100+, shares sorted by market value (any Polymarket name)\n/port 5 <trader> — same list, only the top 5 by market value\n/fullport — top 20 of the net non-sports book across tracked wallets ($100+, by market value); (n) is how many wallets are net that side\n/fullport 5 — same list, only the top 5\n/cash <trader> — pUSD cash on that Polymarket profile (name or wallet)\n/lasttrades — fills in the last 24h (sports excluded; trader, market, and window are optional)\n/lasttrades Flip Andersson 6h — one trader in one market; names resolve even if untracked; omit the trader to use all tracked wallets\n/kelly <price> <fv> — full / half / 1/3 / 1/4 Kelly %% of bankroll (cents or 0–1)\n/ob <market> — Yes CLOB ticks (4 each side) with size (words pick tracked-heavy or high-volume markets)\n/obp <market> — Pascal book (4 closest ticks each side; an event name shows every outcome)\n/obk <market> — Kalshi book (4 closest Yes ticks each side; an event name shows every outcome)\n/chart <market> [24h] — Yes candle chart (15m–90d; 6h, 7d, 1w; default 24h; words, slug, or URL)\n/pos, /holders, /ob, /obp, /obk, and /chart with no market reuse the last one (so /ob Aliens then /holders, /pos, /chart, or /ob again). Replying to a message that names one market does the same. /other repeats that command for the other main outcome (highest Yes price in the event); reply to the message or send /other next. /alert 32 1000 and /pricewatch NO 3 do the same\n/alert <market> — watch Yes asks to take; then reply with price and min size (or /alert <market> 32 1000). /alert alone lists watches\n/unalert <market> — stop a price alert\n/pricewatch <market> <YES|NO> <cents> — ping when that side's midpoint moves by N cents, then re-anchor\n/unpricewatch <market> — stop a price watch\n/tracked — names of wallets being watched\n/add <wallet or name> — start watching (name looks up the current wallet id)\n/unadd <wallet or name> — stop watching that wallet id\n/update — pull origin/main from GitHub, rebuild, and restart\n/help", formatUSD(minUSD))
 }
 
 // MinSizeStatus is the reply after /minsize or a change.
