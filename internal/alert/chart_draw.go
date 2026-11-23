@@ -6,8 +6,11 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"time"
 	_ "time/tzdata"
+
+	"github.com/holgstr/detector/internal/polymarket"
 )
 
 const (
@@ -21,10 +24,6 @@ func chartLocation() *time.Location {
 		return time.UTC
 	}
 	return loc
-}
-
-func chartZoneLabel() string {
-	return time.Now().In(chartLocation()).Format("MST")
 }
 
 // RenderCandles draws an OHLC chart of r.Candles over [start, end] (unix seconds).
@@ -137,6 +136,8 @@ func RenderCandles(r ChartReport, start, end int64) ([]byte, error) {
 		drawText(img, x, bottom+12, text, label)
 	}
 
+	drawBookOverlay(img, chartBookLines(r.Books), left, top, bottom, bg, label)
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return nil, err
@@ -180,6 +181,107 @@ func candleRange(cs []Candle) (lo, hi float64) {
 		}
 	}
 	return lo, hi
+}
+
+// chartBookLines is the /ob ladder without the market name.
+// An empty book is omitted so the chart corner stays clear.
+func chartBookLines(books []polymarket.OutcomeBook) []string {
+	if !booksHaveSize(books) {
+		return nil
+	}
+	body := strings.Trim(formatOBBody(books), "\n")
+	if body == "" || body == "No CLOB depth." {
+		return nil
+	}
+	return strings.Split(body, "\n")
+}
+
+func booksHaveSize(books []polymarket.OutcomeBook) bool {
+	for _, book := range booksToShow(books) {
+		if len(levelsWithSize(book.Asks)) > 0 || len(levelsWithSize(book.Bids)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// drawBookOverlay paints a small /ob ladder in the top-left or bottom-left
+// of the plot, whichever corner has more empty background.
+func drawBookOverlay(img *image.RGBA, lines []string, left, top, bottom int, bg, ink color.RGBA) {
+	if len(lines) == 0 {
+		return
+	}
+	const scale = 2
+	lineH := 8 * scale
+	maxH := (bottom - top) * 2 / 5
+	if maxH < lineH {
+		return
+	}
+	if len(lines)*lineH > maxH {
+		lines = lines[:maxH/lineH]
+	}
+	w := 0
+	for _, ln := range lines {
+		if tw := textWidthScale(ln, scale); tw > w {
+			w = tw
+		}
+	}
+	if w == 0 {
+		return
+	}
+	pad := 2 * scale
+	blockW := w + pad*2
+	blockH := len(lines)*lineH - scale + pad*2
+	bestX, bestY := bookOrigin(img, blockW, blockH, left, top, bottom, bg)
+	rect(img, bestX, bestY, bestX+blockW, bestY+blockH, bg)
+	y := bestY + pad
+	for _, ln := range lines {
+		drawTextScale(img, bestX+pad, y, ln, ink, scale)
+		y += lineH
+	}
+}
+
+func bookOrigin(img *image.RGBA, blockW, blockH, left, top, bottom int, bg color.RGBA) (x, y int) {
+	x = left + 4
+	topY := top + 4
+	botY := bottom - 4 - blockH
+	if botY < topY {
+		botY = topY
+	}
+	bestX, bestY := x, topY
+	bestInk := countInk(img, x, topY, x+blockW, topY+blockH, bg)
+	if botY != topY {
+		if inkN := countInk(img, x, botY, x+blockW, botY+blockH, bg); inkN < bestInk {
+			bestX, bestY = x, botY
+		}
+	}
+	return bestX, bestY
+}
+
+func countInk(img *image.RGBA, x0, y0, x1, y1 int, bg color.RGBA) int {
+	b := img.Bounds()
+	if x0 < b.Min.X {
+		x0 = b.Min.X
+	}
+	if y0 < b.Min.Y {
+		y0 = b.Min.Y
+	}
+	if x1 >= b.Max.X {
+		x1 = b.Max.X - 1
+	}
+	if y1 >= b.Max.Y {
+		y1 = b.Max.Y - 1
+	}
+	n := 0
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			i := img.PixOffset(x, y)
+			if img.Pix[i] != bg.R || img.Pix[i+1] != bg.G || img.Pix[i+2] != bg.B {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func formatAxisTime(t time.Time, window time.Duration) string {
@@ -261,18 +363,61 @@ var glyphs = map[rune][7]string{
 	'.': {"00000", "00000", "00000", "00000", "00000", "01100", "01100"},
 	'-': {"00000", "00000", "00000", "11111", "00000", "00000", "00000"},
 	' ': {"00000", "00000", "00000", "00000", "00000", "00000", "00000"},
+	'¢': {"00100", "01111", "10100", "10100", "10100", "01111", "00100"},
+	'k': {"10000", "10000", "10010", "10100", "11000", "10100", "10010"},
+	'A': {"01110", "10001", "10001", "11111", "10001", "10001", "10001"},
+	'B': {"11110", "10001", "10001", "11110", "10001", "10001", "11110"},
+	'C': {"01110", "10001", "10000", "10000", "10000", "10001", "01110"},
+	'D': {"11110", "10001", "10001", "10001", "10001", "10001", "11110"},
+	'E': {"11111", "10000", "10000", "11110", "10000", "10000", "11111"},
+	'F': {"11111", "10000", "10000", "11110", "10000", "10000", "10000"},
+	'G': {"01110", "10001", "10000", "10111", "10001", "10001", "01111"},
+	'H': {"10001", "10001", "10001", "11111", "10001", "10001", "10001"},
+	'I': {"01110", "00100", "00100", "00100", "00100", "00100", "01110"},
+	'J': {"00111", "00010", "00010", "00010", "10010", "10010", "01100"},
+	'K': {"10001", "10010", "10100", "11000", "10100", "10010", "10001"},
+	'L': {"10000", "10000", "10000", "10000", "10000", "10000", "11111"},
+	'M': {"10001", "11011", "10101", "10101", "10001", "10001", "10001"},
+	'N': {"10001", "11001", "10101", "10011", "10001", "10001", "10001"},
+	'O': {"01110", "10001", "10001", "10001", "10001", "10001", "01110"},
+	'P': {"11110", "10001", "10001", "11110", "10000", "10000", "10000"},
+	'Q': {"01110", "10001", "10001", "10001", "10101", "10010", "01101"},
+	'R': {"11110", "10001", "10001", "11110", "10100", "10010", "10001"},
+	'S': {"01111", "10000", "10000", "01110", "00001", "00001", "11110"},
+	'T': {"11111", "00100", "00100", "00100", "00100", "00100", "00100"},
+	'U': {"10001", "10001", "10001", "10001", "10001", "10001", "01110"},
+	'V': {"10001", "10001", "10001", "10001", "01010", "01010", "00100"},
+	'W': {"10001", "10001", "10001", "10101", "10101", "10101", "01010"},
+	'X': {"10001", "10001", "01010", "00100", "01010", "10001", "10001"},
+	'Y': {"10001", "10001", "01010", "00100", "00100", "00100", "00100"},
+	'Z': {"11111", "00001", "00010", "00100", "01000", "10000", "11111"},
 }
 
 const glyphScale = 2
 
 func textWidth(s string) int {
-	if s == "" {
+	return textWidthScale(s, glyphScale)
+}
+
+func textWidthScale(s string, scale int) int {
+	if s == "" || scale < 1 {
 		return 0
 	}
-	return len([]rune(s))*6*glyphScale - glyphScale
+	n := len([]rune(s))
+	if n == 0 {
+		return 0
+	}
+	return n*6*scale - scale
 }
 
 func drawText(img *image.RGBA, x, y int, s string, c color.RGBA) {
+	drawTextScale(img, x, y, s, c, glyphScale)
+}
+
+func drawTextScale(img *image.RGBA, x, y int, s string, c color.RGBA, scale int) {
+	if scale < 1 {
+		scale = 1
+	}
 	for _, r := range s {
 		g, ok := glyphs[r]
 		if !ok {
@@ -284,13 +429,13 @@ func drawText(img *image.RGBA, x, y int, s string, c color.RGBA) {
 				if bits[col] != '1' {
 					continue
 				}
-				for dy := 0; dy < glyphScale; dy++ {
-					for dx := 0; dx < glyphScale; dx++ {
-						set(img, x+col*glyphScale+dx, y+row*glyphScale+dy, c)
+				for dy := 0; dy < scale; dy++ {
+					for dx := 0; dx < scale; dx++ {
+						set(img, x+col*scale+dx, y+row*scale+dy, c)
 					}
 				}
 			}
 		}
-		x += 6 * glyphScale
+		x += 6 * scale
 	}
 }
