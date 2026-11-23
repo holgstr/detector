@@ -28,6 +28,7 @@
 // /obp <market> prints the same ladder from Pascal (an event name shows every outcome).
 // /obk <market> prints that ladder from Kalshi (an event name shows every outcome).
 // /chart <market> [24h] sends a Yes candle chart (15m–90d; default 24h). Words, slugs, and URLs resolve like /ob.
+// The caption is only the market name. The image includes a small /ob ladder in an open left corner.
 // With no market, /ob, /obp, /obk, and /chart reuse the market the previous command named, including a repeat of the same command.
 // /alert <market> finds a market then asks for a Yes ask price and min size;
 // it pings once when that size is sitting at that price or lower (take), then every 1h.

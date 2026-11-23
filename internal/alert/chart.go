@@ -40,6 +40,7 @@ type ChartReport struct {
 	Window  time.Duration
 	Bucket  time.Duration
 	Candles []Candle
+	Books   []polymarket.OutcomeBook
 	PNG     []byte
 }
 
@@ -47,6 +48,7 @@ type chartAPI interface {
 	posMarketAPI
 	positionLookup
 	FetchYesPriceHistory(ctx context.Context, conditionID string, start, end int64, fidelityMin int) (polymarket.PriceHistory, error)
+	FetchOutcomeBooks(ctx context.Context, conditionID string) ([]polymarket.OutcomeBook, error)
 }
 
 // ClampChartWindow snaps a requested window into the range /chart will fetch.
@@ -183,6 +185,9 @@ func FetchChart(ctx context.Context, api chartAPI, query string, window time.Dur
 	if len(rep.Candles) == 0 {
 		return rep, ErrNoPriceHistory
 	}
+	if books, err := api.FetchOutcomeBooks(ctx, hit.Market.ConditionID); err == nil {
+		rep.Books = books
+	}
 	png, err := RenderCandles(rep, start, end)
 	if err != nil {
 		return rep, err
@@ -201,8 +206,8 @@ func chartTitle(hit polymarket.SearchMarket) string {
 	return strings.TrimSpace(hit.Market.Slug)
 }
 
-// FormatChartCaption is the text under the photo. A Polymarket URL, when
-// present, is what a reply uses as the market.
+// FormatChartCaption is the text under the photo: the market name only.
+// A one-line name is what a reply uses as the market.
 func FormatChartCaption(r ChartReport) string {
 	title := strings.TrimSpace(r.Title)
 	if title == "" {
@@ -211,37 +216,11 @@ func FormatChartCaption(r ChartReport) string {
 	if title == "" {
 		title = strings.TrimSpace(r.Query)
 	}
-	outcome := strings.TrimSpace(r.Outcome)
-	if outcome == "" {
-		outcome = "Yes"
+	title = strings.Join(strings.Fields(title), " ")
+	if runes := []rune(title); len(runes) > 1000 {
+		title = string(runes[:1000])
 	}
-	move := ""
-	if n := len(r.Candles); n > 0 {
-		move = formatCents(r.Candles[n-1].Close)
-		if r.Candles[0].Open != r.Candles[n-1].Close {
-			move = formatCents(r.Candles[0].Open) + " → " + move
-		}
-		move = " " + move
-	}
-	var b strings.Builder
-	b.WriteString(title)
-	b.WriteByte('\n')
-	fmt.Fprintf(&b, "%s · %s candles · %s%s · %s",
-		FormatChartWindow(r.Window),
-		FormatChartWindow(r.Bucket),
-		outcome,
-		move,
-		chartZoneLabel(),
-	)
-	if u := strings.TrimSpace(r.URL); u != "" {
-		b.WriteByte('\n')
-		b.WriteString(u)
-	}
-	s := b.String()
-	if runes := []rune(s); len(runes) > 1000 {
-		s = string(runes[:1000])
-	}
-	return s
+	return title
 }
 
 // FormatChartWindow prints a duration the way /chart accepts it.

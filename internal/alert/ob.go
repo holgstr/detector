@@ -60,9 +60,13 @@ func FormatOBReport(r OBReport) string {
 	if title == "" {
 		title = strings.TrimSpace(r.Query)
 	}
+	return title + formatOBBody(r.Books)
+}
+
+// formatOBBody is the /ob ladder under the market name, including the blank line.
+func formatOBBody(books []polymarket.OutcomeBook) string {
+	books = booksToShow(books)
 	var b strings.Builder
-	b.WriteString(title)
-	books := booksToShow(r.Books)
 	b.WriteByte('\n')
 	if len(books) == 0 {
 		b.WriteString("\nNo CLOB depth.")
