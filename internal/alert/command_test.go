@@ -248,6 +248,38 @@ func TestParseCommand(t *testing.T) {
 		t.Fatalf("obk mention %+v", got)
 	}
 
+	got = ParseCommand("/chart")
+	if got.Cmd != CmdChart || got.Market != "" || got.Window != 24*time.Hour {
+		t.Fatalf("chart default %+v", got)
+	}
+	got = ParseCommand("/chart@detectx_bot 6h Fed decision 2026")
+	if got.Cmd != CmdChart || got.Market != "Fed decision 2026" || got.Window != 6*time.Hour {
+		t.Fatalf("chart window first %+v", got)
+	}
+	got = ParseCommand("/chart Fed decision 2026 7d")
+	if got.Cmd != CmdChart || got.Market != "Fed decision 2026" || got.Window != 7*24*time.Hour {
+		t.Fatalf("chart window last %+v", got)
+	}
+	got = ParseCommand("/candles 1w")
+	if got.Cmd != CmdChart || got.Market != "" || got.Window != 7*24*time.Hour {
+		t.Fatalf("chart week %+v", got)
+	}
+	got = ParseCommand("/chart 24")
+	if got.Cmd != CmdChart || got.Market != "" || got.Window != 24*time.Hour {
+		t.Fatalf("chart bare hours %+v", got)
+	}
+	got = ParseCommand("/chart 15m Andersson")
+	if got.Cmd != CmdChart || got.Market != "Andersson" || got.Window != 15*time.Minute {
+		t.Fatalf("chart minutes %+v", got)
+	}
+	if ParseCommand("/chart 6h 12h").Cmd != CmdHelp {
+		t.Fatal("chart two windows")
+	}
+	got = ParseCommand("/chart 1m")
+	if got.Cmd != CmdChart || got.Window != 15*time.Minute {
+		t.Fatalf("chart min clamp %+v", got)
+	}
+
 	got = ParseCommand("/alert Andersson")
 	if got.Cmd != CmdAlert || got.Market != "Andersson" || got.Price != 0 {
 		t.Fatalf("alert %+v", got)

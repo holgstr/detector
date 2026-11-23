@@ -19,6 +19,8 @@ func MarketCommandName(c Command) (string, bool) {
 		return "obp", true
 	case CmdOBK:
 		return "obk", true
+	case CmdChart:
+		return "chart", true
 	default:
 		return "", false
 	}
@@ -37,6 +39,8 @@ func ParseMarketCommand(name string) (Command, bool) {
 		return CmdOBP, true
 	case "obk":
 		return CmdOBK, true
+	case "chart", "charts", "candle", "candles":
+		return CmdChart, true
 	default:
 		return 0, false
 	}
@@ -51,7 +55,7 @@ func OtherSource(replyID int64, replyText string, sent []SentMarket, lastCmd, la
 		cmd, cmdOK := ParseMarketCommand(row.Cmd)
 		market := strings.TrimSpace(row.Market)
 		if !cmdOK || market == "" {
-			return 0, "", "That message isn't a /pos, /holders, or /ob."
+			return 0, "", "That message isn't a /pos, /holders, /ob, or /chart."
 		}
 		return cmd, market, ""
 	}
@@ -84,7 +88,7 @@ func lastOther(lastCmd, lastMarket string) (Command, string, string) {
 	cmd, ok := ParseMarketCommand(lastCmd)
 	market := strings.TrimSpace(lastMarket)
 	if !ok || market == "" {
-		return 0, "", "Reply to a /pos, /holders, or /ob, or run one of those first."
+		return 0, "", "Reply to a /pos, /holders, /ob, or /chart, or run one of those first."
 	}
 	return cmd, market, ""
 }

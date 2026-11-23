@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +59,55 @@ func TestSendMessage(t *testing.T) {
 	}
 	if body["chat_id"].(float64) != 99 || body["text"] != "hello" {
 		t.Fatalf("%s", gotBody)
+	}
+}
+
+func TestSendPhoto(t *testing.T) {
+	var caption, filename string
+	var photo []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/botTEST/sendPhoto") {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(part)
+			switch part.FormName() {
+			case "chat_id":
+				if string(body) != "99" {
+					t.Errorf("chat %s", body)
+				}
+			case "caption":
+				caption = string(body)
+			case "photo":
+				filename = part.FileName()
+				photo = body
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{"message_id": 42}})
+	}))
+	t.Cleanup(ts.Close)
+
+	c := New("TEST")
+	c.Base = ts.URL
+	c.HTTP = ts.Client()
+	id, err := c.SendPhoto(context.Background(), 99, []byte("png-bytes"), "Fed\nhttps://polymarket.com/event/fed/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 42 || caption == "" || filename != "chart.png" || string(photo) != "png-bytes" {
+		t.Fatalf("id=%d caption=%q file=%s photo=%q", id, caption, filename, photo)
 	}
 }
 

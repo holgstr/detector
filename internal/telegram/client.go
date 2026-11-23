@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,7 +16,7 @@ import (
 
 const apiBase = "https://api.telegram.org"
 
-// Client is a tiny Bot API wrapper (sendMessage + getUpdates).
+// Client is a tiny Bot API wrapper (sendMessage, sendPhoto, getUpdates).
 type Client struct {
 	Token string
 	HTTP  *http.Client
@@ -126,6 +127,39 @@ func (c *Client) SendMessageID(ctx context.Context, chatID int64, text string) (
 	}
 	var sent sentMessage
 	if err := c.do(ctx, "sendMessage", bytes.NewReader(body), "application/json", &sent); err != nil {
+		return 0, err
+	}
+	return sent.MessageID, nil
+}
+
+// SendPhoto posts a PNG and returns Telegram's message id.
+// caption is the text a reply sees (Telegram stores it on the photo message).
+func (c *Client) SendPhoto(ctx context.Context, chatID int64, png []byte, caption string) (int64, error) {
+	if len(png) == 0 {
+		return 0, fmt.Errorf("empty photo")
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := w.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(caption) != "" {
+		if err := w.WriteField("caption", caption); err != nil {
+			return 0, err
+		}
+	}
+	part, err := w.CreateFormFile("photo", "chart.png")
+	if err != nil {
+		return 0, err
+	}
+	if _, err := part.Write(png); err != nil {
+		return 0, err
+	}
+	if err := w.Close(); err != nil {
+		return 0, err
+	}
+	var sent sentMessage
+	if err := c.do(ctx, "sendPhoto", &buf, w.FormDataContentType(), &sent); err != nil {
 		return 0, err
 	}
 	return sent.MessageID, nil

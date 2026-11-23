@@ -56,7 +56,7 @@ type State struct {
 	// /ob then /obp, and /obp then /ob, reuse this so the other venue is not
 	// handed a Polymarket URL or a Pascal symbol.
 	LastSearchQuery string `json:"last_search_query,omitempty"`
-	// LastMarketCmd is the last /pos, /holders, /ob, /obp, or /obk. /other repeats it.
+	// LastMarketCmd is the last /pos, /holders, /ob, /obp, /obk, or /chart. /other repeats it.
 	LastMarketCmd string `json:"last_market_cmd,omitempty"`
 	// SentMarkets remembers recent outbound message ids so a reply to an older
 	// /pos still repeats /pos rather than whatever command ran last.
